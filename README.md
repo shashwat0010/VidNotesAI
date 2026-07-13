@@ -5,34 +5,66 @@ An AI-powered video lecture parsing, indexing, and study notes generation worksp
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ Detailed System Architecture
 
 VidNotes is designed with a containerized, decoupled microservice architecture optimized for processing heavy video, audio, OCR, and AI workloads:
 
 ```mermaid
 graph TD
-    Client[Web Browser Client] <-->|Port 80 HTTP / WS| Nginx[Nginx Reverse Proxy]
-    Nginx <-->|Port 3000| Frontend[Next.js Frontend]
-    Nginx <-->|Port 8000| Backend[FastAPI Backend]
-    Nginx <-->|Port 9000| MinIO[MinIO Object Storage]
+    Client[Web Browser Client] <--> Nginx[Nginx Reverse Proxy]
+    Nginx <--> Frontend[Next.js Frontend]
+    Nginx <--> Backend[FastAPI Backend]
+    Nginx <--> MinIO[MinIO Object Storage]
     
-    Backend <-->|SQL| Postgres[(PostgreSQL + pgvector)]
-    Backend <-->|Task Queue| Redis[(Redis Broker)]
+    Backend <--> Postgres[(PostgreSQL + pgvector)]
+    Backend <--> Redis[(Redis Broker)]
     
-    Celery[Celery Processing Worker] <-->|Read/Write Tasks| Redis
-    Celery <-->|Read/Write S3 Objects| MinIO
-    Celery <-->|Query/Update Metadata| Postgres
-    Celery --->|API Calls| LLM[LLM API: Mistral / OpenAI / Gemini]
+    Celery[Celery Processing Worker] <--> Redis
+    Celery <--> MinIO
+    Celery <--> Postgres
+    Celery ---> LLM[LLM API: Mistral / OpenAI / Gemini]
 ```
 
-### Component Breakdown
-1. **Nginx Reverse Proxy**: Orchestrates routing for the frontend, backend APIs, and handles MinIO storage bucket requests (`/vidnotes-storage/`) via a single port 80.
-2. **Next.js Frontend**: Responsive dark-mode dashboard workspace featuring interactive HTML5/YouTube players, Markdown editors, study deck carousels, and a live AI chatbot.
-3. **FastAPI Backend**: Exposes clean, typed REST endpoints for workspace operations, RAG chat vectors query, and PDF/Word note generation.
-4. **Celery Worker**: Asynchronous processing pipeline. Handles audio extraction, Whisper speech-to-text, keyframe extraction, EasyOCR processing, and LLM orchestration.
-5. **PostgreSQL + pgvector**: Stores application data, relational metadata, transcription segments, and 1536-dimensional semantic embeddings for contextual RAG searches.
-6. **Redis**: In-memory broker for scheduling tasks and syncing celery pipeline jobs.
-7. **MinIO**: Local S3-compatible object storage serving keyframe slide captures, audio extracts, and uploads.
+### 🧩 Component Breakdown & Technologies Used
+
+1. **Nginx Reverse Proxy**: Orchestrates routing. Resolves `/api/v1/` to backend endpoints, `/vidnotes-storage/` to local MinIO storage files (enabling public access proxy), and all other traffic to the frontend.
+2. **Next.js Frontend**: Constructed using **Next.js (App Router)**, **TailwindCSS**, and **Lucide Icons** for a premium dark-mode interface. Integrates **Mermaid.js** for rendering concepts maps dynamically in the UI.
+3. **FastAPI Backend**: Powered by **Python FastAPI** and **SQLAlchemy (Async)**. Exposes RESTful endpoints, handles database queries, and manages document exports (`.pdf` / `.docx`) with slide images embedded via ReportLab & python-docx.
+4. **Celery Worker**: Powered by **Celery** to run background jobs sequentially (preventing race conditions and server overloading).
+5. **PostgreSQL + pgvector**: A database system matching SQL data with **pgvector** for vector search embeddings (1536 dimensions).
+6. **Redis**: Manages the message queuing broker for Celery tasks.
+7. **MinIO**: Emulates a local **S3 storage bucket** to host keyframe slide captures, audio extracts, and file uploads.
+8. **EasyOCR & ffmpeg**: Used locally inside the Celery worker for slide text extraction (OCR) and audio stream extraction.
+
+---
+
+## 🤖 LLM Execution Pipeline & API Call Count
+
+During a single video processing pipeline run, LLM API calls are orchestrated sequentially to ensure reliability and bypass rate-limiting. Here is exactly when and how many times the LLM is called:
+
+### 1. Ingestion / Pre-processing Stage (Repeated per Slide Keyframe)
+For each keyframe slide extracted from the video (number depends on video length, ranging from **3 to 15 keyframes**):
+* **OCR Text Cleanup (1 Call per Keyframe)**: Calls the LLM to post-process raw slide OCR text, correct typos, and strip noisy characters.
+* **Keyframe Vision Analysis (1 Call per Keyframe)**: Calls the vision model (`gpt-4o`, `gemini-1.5`, or `pixtral`) to generate a detailed description of diagrams, code blocks, or charts present on the slide.
+* *Total calls: `2 × Keyframes count`*
+
+### 2. Semantic Indexing Stage (Repeated per Content Chunk)
+* **Text Embedding Generation (1 Call per 1000-character Chunk)**: Calls the embedding API (`text-embedding-3-small` or `mistral-embed`) to calculate a 1536-dimensional semantic representation of the grouped transcript + visual slide text for pgvector indexing.
+* *Total calls: `1 × Chunks count`*
+
+### 3. Study Notes Generation Stage (Fixed calls)
+* **Summarization & Notes Packages (2 Calls)**: 
+  - **Call 1**: Generates the high-level Executive Summary and Detailed Lecture Notes (with inline image placeholders matching timelines).
+  - **Call 2**: Generates Student Revision Checklists, study tips, Core Key Takeaways, and Glossary items.
+* *Total calls: `2`*
+
+### 4. Interactive Study Materials Stage (On-Demand / User Triggered)
+These are **never generated during initial ingestion** to avoid unnecessary API costs and rate limits. Instead, they are generated only when the user clicks their respective tabs in the workspace UI:
+* **Flashcards Generation (1 Call)**: Triggered once when opening the flashcards tab for the first time.
+* **Multiple Choice Quiz (1 Call)**: Triggered once when opening the quiz tab for the first time.
+* **Concept Mind Map (1 Call)**: Triggered once when opening the concept map tab (produces a Mermaid syntax map).
+* *Total calls: `3 (only when clicked by user)`*
+
 
 ---
 
