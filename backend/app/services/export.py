@@ -48,7 +48,13 @@ class ExportService:
         return "\n".join(md)
 
     @staticmethod
-    def generate_docx(note: NoteOutput, title: str) -> bytes:
+    def generate_docx(note: NoteOutput, title: str, keyframes: list = None) -> bytes:
+        import io
+        import re
+        import requests
+        from docx import Document
+        from docx.shared import Inches, Pt, RGBColor
+
         doc = Document()
         
         # Add basic document configurations
@@ -69,55 +75,135 @@ class ExportService:
         t = doc.add_heading(level=0)
         run = t.add_run(f"{title} - Study Notes")
         run.font.size = Pt(24)
-        run.font.color.rgb = RGBColor(31, 41, 55) # Sleek Dark Grey
+        run.font.color.rgb = RGBColor(31, 41, 55)
+
+        # Setup keyframes map
+        MINIO_BASE = "http://minio:9000"
+        kf_url_map = {}
+        if keyframes:
+            for kf in keyframes:
+                url = kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url') if isinstance(kf, dict) else None
+                if url:
+                    kf_url_map[url] = f"{MINIO_BASE}{url}"
+
+        def _fetch_img_stream(url: str):
+            try:
+                resp = requests.get(url, timeout=8)
+                resp.raise_for_status()
+                return io.BytesIO(resp.content)
+            except Exception as e:
+                print(f"[DOCX] Image fetch failed {url}: {e}")
+                return None
+
+        def _parse_md_docx(text: str):
+            if not isinstance(text, str):
+                return
+            lines = text.splitlines()
+            for line in lines:
+                l_str = line.strip()
+                if not l_str:
+                    continue
+
+                # Check images
+                img_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+                matches = list(re.finditer(img_pattern, l_str))
+                if matches:
+                    last_idx = 0
+                    for match in matches:
+                        start_pos, end_pos = match.span()
+                        txt = l_str[last_idx:start_pos].strip()
+                        if txt:
+                            doc.add_paragraph(txt)
+                        
+                        caption_text = match.group(1)
+                        img_url = match.group(2)
+                        fetch_url = kf_url_map.get(img_url, f"{MINIO_BASE}{img_url}" if img_url.startswith('/') else None)
+                        if fetch_url:
+                            stream = _fetch_img_stream(fetch_url)
+                            if stream:
+                                try:
+                                    doc.add_picture(stream, width=Inches(4.5))
+                                    if caption_text:
+                                        cap_p = doc.add_paragraph()
+                                        cap_run = cap_p.add_run(caption_text)
+                                        cap_run.italic = True
+                                        cap_run.font.size = Pt(9)
+                                except Exception as e:
+                                    print(f"[DOCX] Add picture failed: {e}")
+                        last_idx = end_pos
+                    txt_after = l_str[last_idx:].strip()
+                    if txt_after:
+                        doc.add_paragraph(txt_after)
+                    continue
+
+                # Headings
+                if l_str.startswith("### "):
+                    p = doc.add_heading(l_str[4:], level=3)
+                    p.style.font.color.rgb = RGBColor(55, 65, 81)
+                elif l_str.startswith("## "):
+                    p = doc.add_heading(l_str[3:], level=2)
+                    p.style.font.color.rgb = RGBColor(31, 41, 55)
+                elif l_str.startswith("# "):
+                    p = doc.add_heading(l_str[2:], level=1)
+                    p.style.font.color.rgb = RGBColor(30, 64, 175)
+                elif l_str.startswith("- ") or l_str.startswith("* "):
+                    doc.add_paragraph(l_str[2:], style='List Bullet')
+                elif re.match(r'^\d+\.\s+(.+)', l_str):
+                    match = re.match(r'^\d+\.\s+(.+)', l_str)
+                    doc.add_paragraph(match.group(1), style='List Number')
+                else:
+                    doc.add_paragraph(l_str)
 
         # Executive Summary
         doc.add_heading("Executive Summary", level=1)
-        doc.add_paragraph(note.summary_exec)
+        _parse_md_docx(note.summary_exec)
 
-        # Detailed Summary
+        # Detailed summary
         doc.add_heading("Detailed Lecture Notes", level=1)
-        doc.add_paragraph(note.summary_detailed)
+        _parse_md_docx(note.summary_detailed)
 
         # Revision Guide
-        doc.add_heading("Revision & Review Guide", level=1)
-        doc.add_paragraph(note.revision_notes)
+        doc.add_heading("Revision Guide", level=1)
+        _parse_md_docx(note.revision_notes)
 
         # Takeaways
         doc.add_heading("Key Takeaways", level=1)
-        doc.add_paragraph(note.takeaways)
+        _parse_md_docx(note.takeaways)
 
         # Glossary
         doc.add_heading("Glossary of Terms", level=1)
-        doc.add_paragraph(note.glossary)
+        _parse_md_docx(note.glossary)
 
         # Flashcards
-        doc.add_heading("Flashcards", level=1)
-        for idx, card in enumerate(note.flashcards, 1):
-            p = doc.add_paragraph()
-            p.add_run(f"Question {idx}: ").bold = True
-            p.add_run(f"{card.get('question')}\n")
-            p.add_run(f"Answer: ").bold = True
-            p.add_run(f"{card.get('answer')}")
+        if note.flashcards:
+            doc.add_heading("Flashcards", level=1)
+            for idx, card in enumerate(note.flashcards, 1):
+                p = doc.add_paragraph()
+                p.add_run(f"Q{idx}: ").bold = True
+                p.add_run(f"{card.get('question')}\n")
+                p.add_run(f"A{idx}: ").bold = True
+                p.add_run(f"{card.get('answer')}")
 
         # Quiz
-        doc.add_heading("Multiple Choice Quiz", level=1)
-        for idx, mcq in enumerate(note.mcqs, 1):
-            p = doc.add_paragraph()
-            p.add_run(f"Question {idx}: ").bold = True
-            p.add_run(f"{mcq.get('question')}\n")
-            for o in mcq.get('options', []):
-                p.add_run(f"  [ ] {o}\n")
-            p.add_run("Correct Answer: ").bold = True
-            p.add_run(f"{mcq.get('answer')}\n")
-            p.add_run("Explanation: ").italic = True
-            p.add_run(f"{mcq.get('explanation')}")
+        if note.mcqs:
+            doc.add_heading("Multiple Choice Quiz", level=1)
+            for idx, mcq in enumerate(note.mcqs, 1):
+                p = doc.add_paragraph()
+                p.add_run(f"Question {idx}: ").bold = True
+                p.add_run(f"{mcq.get('question')}\n")
+                for o in mcq.get('options', []):
+                    p.add_run(f"  [ ] {o}\n")
+                p.add_run("Correct Answer: ").bold = True
+                p.add_run(f"{mcq.get('answer')}\n")
+                p.add_run("Explanation: ").italic = True
+                p.add_run(f"{mcq.get('explanation')}")
 
         # Save to buffer
         file_stream = io.BytesIO()
         doc.save(file_stream)
         file_stream.seek(0)
         return file_stream.getvalue()
+
 
     @staticmethod
     def generate_pdf(note: NoteOutput, title: str, keyframes: list = None) -> bytes:

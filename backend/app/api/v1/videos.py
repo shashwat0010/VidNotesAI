@@ -267,7 +267,12 @@ async def export_workspace_notes(
             headers={"Content-Disposition": f"attachment; filename={title}_notes.md"}
         )
     elif format_type.lower() == "docx":
-        content = export_service.generate_docx(note, video.title)
+        from app.models.models import Keyframe
+        kf_res = await db.execute(
+            select(Keyframe).filter(Keyframe.video_id == video_id).order_by(Keyframe.timestamp.asc())
+        )
+        keyframes = kf_res.scalars().all()
+        content = export_service.generate_docx(note, video.title, keyframes)
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

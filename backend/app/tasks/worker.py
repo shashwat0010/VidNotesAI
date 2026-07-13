@@ -81,17 +81,16 @@ def process_video_pipeline(self, video_id: str, user_id: int):
             captions = None # Uploaded files never have pre-fetched YouTube captions
 
         # 3. Transcribe if no captions
-        segments_data = []
+        raw_segments = []
         if captions:
             print("Using YouTube pre-existing captions.")
             for cap in captions:
                 start = cap["start"]
                 duration = cap["duration"]
-                end = start + duration
-                segments_data.append({
+                raw_segments.append({
                     "text": cap["text"],
                     "start": start,
-                    "end": end
+                    "end": start + duration
                 })
         else:
             print("Captions missing. Performing audio extraction & Whisper transcription...")
@@ -102,10 +101,40 @@ def process_video_pipeline(self, video_id: str, user_id: int):
             # Run Whisper transcription
             transcription_results = whisper_service.transcribe(local_audio_path)
             for seg in transcription_results:
-                segments_data.append({
+                raw_segments.append({
                     "text": seg["text"],
                     "start": seg["start"],
                     "end": seg["end"]
+                })
+
+        # Group transcript segments to avoid excessive 2-3 second timestamps
+        segments_data = []
+        if raw_segments:
+            current_chunk = []
+            chunk_start = None
+            for seg in raw_segments:
+                txt = seg["text"].strip()
+                if not txt:
+                    continue
+                if chunk_start is None:
+                    chunk_start = seg["start"]
+                current_chunk.append(txt)
+                chunk_end = seg["end"]
+                
+                # Check if group duration reaches at least 20 seconds
+                if (chunk_end - chunk_start) >= 20.0:
+                    segments_data.append({
+                        "text": " ".join(current_chunk),
+                        "start": chunk_start,
+                        "end": chunk_end
+                    })
+                    current_chunk = []
+                    chunk_start = None
+            if current_chunk:
+                segments_data.append({
+                    "text": " ".join(current_chunk),
+                    "start": chunk_start,
+                    "end": chunk_end
                 })
 
         # Save transcript segments to DB

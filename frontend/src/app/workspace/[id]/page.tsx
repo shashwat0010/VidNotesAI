@@ -98,6 +98,20 @@ interface ChatMessage {
   citations: ChatCitation[] | null;
 }
 
+const getImageUrl = (url: string) => {
+  if (!url) return "";
+  if (url.startsWith("/")) {
+    if (typeof window !== "undefined") {
+      // If we are running frontend on a dev server (like port 3000), route images to Nginx proxy port (80)
+      if (window.location.port === "3000") {
+        return `${window.location.protocol}//${window.location.hostname}${url}`;
+      }
+    }
+    return url;
+  }
+  return url;
+};
+
 function parseMarkdown(text: string) {
   if (!text) return null;
   const lines = text.split("\n");
@@ -124,7 +138,7 @@ function parseMarkdown(text: string) {
       const src = imgMatch[2];
       return (
         <div key={idx} className="my-4 rounded-xl border border-slate-900 overflow-hidden bg-slate-950 max-w-lg">
-          <img src={src} alt={alt} className="w-full h-auto object-contain" />
+          <img src={getImageUrl(src)} alt={alt} className="w-full h-auto object-contain" />
           <span className="text-[10px] text-slate-500 p-2 block border-t border-slate-900 bg-slate-900/20">{alt}</span>
         </div>
       );
@@ -754,7 +768,7 @@ export default function Workspace({ params }: PageProps) {
                           <div key={kf.id} className="glass-card rounded-2xl border border-slate-900 overflow-hidden flex flex-col md:flex-row">
                             <div className="w-full md:w-2/5 bg-slate-950 aspect-video md:aspect-auto flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-900 relative shrink-0">
                               <img
-                                src={kf.s3_url}
+                                src={getImageUrl(kf.s3_url)}
                                 alt={`Frame at ${kf.timestamp}`}
                                 className="w-full h-full object-contain"
                               />

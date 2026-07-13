@@ -1,0 +1,52 @@
+# Environments
+.env
+.env.local
+.env.*.local
+*.env
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Runtime
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Node.js / Frontend builds
+node_modules/
+.next/
+out/
+build/
+dist/
+.npm
+.yarn-error.log
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# App Specific Uploads, Downloads & Temp Data
+/backend/app/uploads/
+/backend/app/temp/
+/backend/temp/
+/uploads/
+/temp/
+*.log
+*.mp3
+*.mp4
+*.wav
+
+# Docker Local Volumizing & Data folders (if mapped locally)
+/postgres_data/
+/minio_data/
+/redis_data/
+
+# Allow README images
+!/vidnotes_app_banner.png
