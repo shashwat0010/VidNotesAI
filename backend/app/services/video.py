@@ -395,7 +395,7 @@ class VideoService:
                     timestamp = float(idx * interval_seconds)
                     keyframes_list.append((timestamp, os.path.join(output_dir, fname)))
                 if keyframes_list:
-                    print(f"[Keyframe Extraction] Extracted {len(keyframes_list)} frames via FFmpeg.")
+                    print(f"[Keyframe Extraction] Extracted {len(keyframes_list)} frames every {interval_seconds}s via FFmpeg.")
                     return keyframes_list
         except Exception as e:
             print(f"[Keyframe FFmpeg notice]: {e}")
@@ -425,11 +425,8 @@ class VideoService:
         except Exception as cv_err:
             print(f"[Keyframe OpenCV notice]: {cv_err}")
 
-        from app.services.cleaner import cleaner_service
-        raw_count = len(keyframes_list)
-        deduped_list = cleaner_service.deduplicate_keyframes(keyframes_list)
-        print(f"[Keyframe Deduplication] Filtered redundant static slides: {raw_count} raw frames -> {len(deduped_list)} unique keyframe slides.")
-        return deduped_list
+        print(f"[Keyframe Extraction] Extracted {len(keyframes_list)} frames every {interval_seconds}s.")
+        return keyframes_list
 
     @staticmethod
     def get_video_duration(file_path: str) -> float:

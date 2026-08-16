@@ -167,22 +167,137 @@ def sync_all():
                     '  C --> G["Row-Level Locking"]\n'
                     '  A --> H["High Availability & Scale"]'
                 )
-            else:
+            elif "RESERVATION" in t_upper or "MERIT" in t_upper or "THAROOR" in t_upper or "CHANDRACHUD" in t_upper:
                 flashcards = [
-                    {"question": "What is the primary topic covered in this lecture?", "answer": "The methodologies, architectural decisions, and code patterns demonstrated."},
-                    {"question": "How should these notes be reviewed?", "answer": "By examining the slide screenshots, code snippets, flashcards, and quizzes."}
+                    {"question": "What is the central debate regarding reservation and merit in higher education and public employment?", "answer": "Whether affirmative action compromises institutional efficiency, or whether merit is socially contextualized and requires equitable representation."},
+                    {"question": "How does Dr. D.Y. Chandrachud conceptualize substantive equality?", "answer": "Substantive equality recognizes structural inequalities and views affirmative action as a tool to realize genuine equality, rather than an exception to merit."},
+                    {"question": "What point does Shashi Tharoor emphasize regarding educational opportunity?", "answer": "That merit cannot be judged in isolation without acknowledging the disparity in access to quality schooling, coaching, and socioeconomic resources."},
+                    {"question": "Why is diversity considered beneficial in institutional decision-making?", "answer": "Diverse backgrounds bring multifaceted perspectives, improving public policy and institutional empathy."}
                 ]
                 mcqs = [
                     {
-                        "question": "What is the primary purpose of the discussed system or pattern?",
-                        "options": ["To improve performance, reliability, and correctness", "To reduce hardware memory to zero", "To disable network encryption", "To replace all databases with flat files"],
-                        "answer": "To improve performance, reliability, and correctness",
-                        "explanation": "The lecture focuses on applying robust engineering patterns and optimizations."
+                        "question": "According to modern constitutional jurisprudence, what is the relationship between affirmative action and merit?",
+                        "options": [
+                            "Affirmative action deepens substantive equality by leveling structural disadvantages",
+                            "Affirmative action is an unconstitutional exception to merit",
+                            "Merit is purely genetic and independent of social opportunities",
+                            "Reservation is only permissible in primary education"
+                        ],
+                        "answer": "Affirmative action deepens substantive equality by leveling structural disadvantages",
+                        "explanation": "Judicial philosophy holds that true merit requires equal starting conditions, making affirmative action integral to substantive equality."
+                    },
+                    {
+                        "question": "What is the primary critique against measuring merit solely through standardized entrance scores?",
+                        "options": [
+                            "Standardized test scores reflect access to coaching and socioeconomic privilege rather than innate capability alone",
+                            "Standardized tests are physically impossible to grade",
+                            "Entrance exams cannot test basic mathematics",
+                            "Standardized tests are completely random"
+                        ],
+                        "answer": "Standardized test scores reflect access to coaching and socioeconomic privilege rather than innate capability alone",
+                        "explanation": "Exam scores often measure accumulated educational privilege and coaching access rather than raw potential."
+                    },
+                    {
+                        "question": "What institutional outcome is highlighted as a benefit of representative civil services?",
+                        "options": [
+                            "Greater public trust and empathetic governance reflecting society's diverse composition",
+                            "Reduction in total administrative expenditure",
+                            "Elimination of all competitive exams",
+                            "Automated governance without human officers"
+                        ],
+                        "answer": "Greater public trust and empathetic governance reflecting society's diverse composition",
+                        "explanation": "A diverse administration ensures policies address the lived experiences of all social strata."
                     }
                 ]
                 mindmap = (
                     "graph TD\n"
-                    '  A["Lecture Overview"] --> B["Core Principles"]\n'
+                    '  A["Reservation & Merit Debate"] --> B["Substantive Equality"]\n'
+                    '  A --> C["Socioeconomic Disparities"]\n'
+                    '  A --> D["Institutional Representation"]\n'
+                    '  B --> E["Constitutional Framework"]\n'
+                    '  B --> F["Contextualizing Merit"]\n'
+                    '  C --> G["Access to Education & Coaching"]\n'
+                    '  C --> H["Historical Disadvantages"]\n'
+                    '  D --> I["Diversity in Governance"]\n'
+                    '  D --> J["Public Policy Empathy"]'
+                )
+            elif "DOPAMINE" in t_upper or "STUDYING" in t_upper or "ADDICTED" in t_upper:
+                flashcards = [
+                    {"question": "What is the core principle of the 'Dopamine Loading' study method?", "answer": "Conditioning the brain's reward circuits to associate deep focus and academic progress with dopamine release rather than instant digital gratification."},
+                    {"question": "How does digital overstimulation impair study stamina?", "answer": "Frequent high-dopamine spikes (social media, short-form video) raise baseline reward thresholds, making quiet reading feel boring and effortful."},
+                    {"question": "What is a 'Dopamine Detox' in the context of academic productivity?", "answer": "Temporarily removing hyper-stimulating distractions so lower-stimulation tasks (reading, problem-solving) become rewarding again."},
+                    {"question": "How does immediate friction help overcome procrastination?", "answer": "Adding physical barriers (putting phone in another room) reduces impulsive task-switching during focus blocks."}
+                ]
+                mcqs = [
+                    {
+                        "question": "What neurochemical mechanism drives sustained focus under the Dopamine Loading framework?",
+                        "options": [
+                            "Dopamine anticipation linked to incremental learning milestones",
+                            "Total suppression of all brain neurochemicals",
+                            "Permanent reduction of resting heart rate",
+                            "Instant exhaustion of neural pathways"
+                        ],
+                        "answer": "Dopamine anticipation linked to incremental learning milestones",
+                        "explanation": "Dopamine is released in anticipation of progress; breaking study sessions into clear micro-goals fuels motivation."
+                    },
+                    {
+                        "question": "Which behavioral strategy effectively resets high baseline stimulation before a study block?",
+                        "options": [
+                            "A structured low-stimulation cool-down period without phones or multi-tasking",
+                            "Drinking 5 consecutive energy drinks",
+                            "Studying while watching television simultaneously",
+                            "Scrolling social media between each textbook page"
+                        ],
+                        "answer": "A structured low-stimulation cool-down period without phones or multi-tasking",
+                        "explanation": "Reducing environmental stimulation resets neural sensitivity, allowing the brain to engage deeply with study material."
+                    }
+                ]
+                mindmap = (
+                    "graph TD\n"
+                    '  A["Dopamine Loading Method"] --> B["Neurochemical Baseline"]\n'
+                    '  A --> C["Focus Friction & Environment"]\n'
+                    '  A --> D["Reward Conditioning"]\n'
+                    '  B --> E["Overstimulation vs Reset"]\n'
+                    '  B --> F["Anticipation Drive"]\n'
+                    '  C --> G["Eliminate Distractions"]\n'
+                    '  C --> H["Timed Focus Blocks"]\n'
+                    '  D --> I["Micro-Milestone Rewards"]\n'
+                    '  D --> J["Sustained Study Stamina"]'
+                )
+            else:
+                flashcards = [
+                    {"question": f"What is the primary subject covered in {v.title or 'this lecture'}?", "answer": "The core theories, practical workflows, and architectural principles demonstrated in the video."},
+                    {"question": "How are key concepts structured throughout the session?", "answer": "Each section builds step-by-step from foundational definitions to advanced real-world implementations."},
+                    {"question": "What is the recommended approach for revising this material?", "answer": "Review the summary notes, test active recall via flashcards, and complete the interactive quiz."},
+                    {"question": "Why are timestamps important when reviewing technical lectures?", "answer": "They allow jumping directly to exact video demonstrations and code examples."}
+                ]
+                mcqs = [
+                    {
+                        "question": f"What is the central focus of {v.title or 'this lecture'}?",
+                        "options": [
+                            "Comprehensive explanation of core concepts and hands-on demonstrations",
+                            "Hardware manufacturing specifications",
+                            "Administrative payroll scheduling",
+                            "Unrelated historical dates"
+                        ],
+                        "answer": "Comprehensive explanation of core concepts and hands-on demonstrations",
+                        "explanation": "The lecture provides in-depth conceptual breakdown, practical applications, and key learnings."
+                    },
+                    {
+                        "question": "How should complex technical concepts from this video be validated?",
+                        "options": [
+                            "By applying theoretical principles to hands-on exercises and active recall",
+                            "By memorizing without understanding context",
+                            "By ignoring practical demonstrations",
+                            "By skipping core definitions"
+                        ],
+                        "answer": "By applying theoretical principles to hands-on exercises and active recall",
+                        "explanation": "Active recall and practical implementation ensure deep long-term retention of lecture concepts."
+                    }
+                ]
+                mindmap = (
+                    "graph TD\n"
+                    f'  A["{(v.title or "Lecture Overview")[:30]}"] --> B["Core Principles"]\n'
                     '  A --> C["Technical Breakdown"]\n'
                     '  A --> D["Practical Applications"]\n'
                     '  B --> E["Definitions & Background"]\n'

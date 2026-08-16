@@ -391,6 +391,7 @@ def _is_placeholder_quiz(mcqs: list) -> bool:
     return any("pgvector embeddings" in str(m.get("question", "")) or "pgvector embeddings" in str(m.get("answer", "")) for m in mcqs)
 
 
+@router.get("/{video_id}/flashcards")
 @router.get("/{video_id}/notes/flashcards")
 async def get_on_demand_flashcards(
     video_id: str,
@@ -422,6 +423,7 @@ async def get_on_demand_flashcards(
     return flashcards
 
 
+@router.get("/{video_id}/quiz")
 @router.get("/{video_id}/notes/quiz")
 async def get_on_demand_quiz(
     video_id: str,
@@ -453,6 +455,7 @@ async def get_on_demand_quiz(
     return mcqs
 
 
+@router.get("/{video_id}/mindmap")
 @router.get("/{video_id}/notes/mindmap")
 async def get_on_demand_mindmap(
     video_id: str,

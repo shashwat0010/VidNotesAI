@@ -816,20 +816,32 @@ Provide ONLY valid JSON. Do not wrap in markdown blocks or prefix in any way."""
         except Exception as e:
             print(f"Failed to generate flashcards via LLM: {e}")
 
-        # Topic-aware flashcards fallback
-        k_upper = consolidated_knowledge.upper()
-        if "ROW_NUMBER" in k_upper or "RANK" in k_upper or "DENSE_RANK" in k_upper:
-            return [
-                {"question": "What is the purpose of the ROW_NUMBER() window function in SQL?", "answer": "It assigns a unique, consecutive integer (1, 2, 3...) to each row in a partition regardless of ties."},
-                {"question": "How does RANK() handle duplicate or tied values?", "answer": "It assigns the same rank to identical values, but skips subsequent rank numbers (e.g., 1, 2, 2, 4)."},
-                {"question": "How does DENSE_RANK() differ from RANK()?", "answer": "DENSE_RANK() assigns identical ranks to ties without skipping subsequent numbers (e.g., 1, 2, 2, 3)."},
-                {"question": "When do ROW_NUMBER(), RANK(), and DENSE_RANK() yield the exact same output?", "answer": "When all rows have distinct, unique values in the ORDER BY clause."}
-            ]
+        # Dynamic fallback: extracts Q&A pairs directly from the lecture text
+        return self._extract_dynamic_flashcards(consolidated_knowledge)
 
-        return [
-            {"question": "What is the core topic of this lecture?", "answer": "The concepts, methodologies, and practical demonstrations explained in the video."},
-            {"question": "How should key concepts be practiced?", "answer": "By reviewing the step-by-step notes and testing understanding with flashcards and quizzes."}
-        ]
+    def _extract_dynamic_flashcards(self, text: str) -> List[Dict[str, str]]:
+        """Dynamically extracts question/answer pairs from lecture knowledge without hardcoded text."""
+        cards = []
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', text) if len(s.strip().split()) >= 6]
+        for s in sentences:
+            if any(term in s.lower() for term in [" is ", " refers to ", " defines ", " means ", " allows ", " enables ", " ensures ", " using ", " difference between "]):
+                parts = re.split(r'\b(?:is|refers to|means|allows|enables|ensures)\b', s, maxsplit=1, flags=re.IGNORECASE)
+                if len(parts) == 2 and len(parts[0].strip()) > 3 and len(parts[1].strip()) > 5:
+                    subject = parts[0].strip().capitalize()
+                    cards.append({
+                        "question": f"What is the role and definition of {subject}?",
+                        "answer": f"{subject} {parts[1].strip()}."
+                    })
+            if len(cards) >= 8:
+                break
+        
+        if len(cards) < 3:
+            for idx, s in enumerate(sentences[:6]):
+                cards.append({
+                    "question": f"Key concept {idx + 1} explained in this lecture:",
+                    "answer": s
+                })
+        return cards or [{"question": "What is the core subject of this lecture?", "answer": text[:200]}]
 
     def generate_quiz(self, consolidated_knowledge: str) -> List[Dict[str, Any]]:
         """
@@ -906,46 +918,37 @@ Provide ONLY valid JSON. Do not wrap in markdown blocks or prefix in any way."""
         except Exception as e:
             print(f"Failed to generate MCQs via LLM: {e}")
 
-        # Topic-aware quiz fallback
-        k_upper = consolidated_knowledge.upper()
-        if "ROW_NUMBER" in k_upper or "RANK" in k_upper or "DENSE_RANK" in k_upper:
-            return [
-                {
-                    "question": "How does RANK() behave compared to DENSE_RANK() when two rows have the same value?",
-                    "options": [
-                        "RANK() skips subsequent rank numbers, while DENSE_RANK() does not skip",
-                        "DENSE_RANK() skips subsequent rank numbers, while RANK() does not skip",
-                        "Both functions always produce consecutive numbers without gaps",
-                        "ROW_NUMBER() is required to resolve tied ranks"
-                    ],
-                    "answer": "RANK() skips subsequent rank numbers, while DENSE_RANK() does not skip",
-                    "explanation": "When duplicate values occur (e.g., two rows tie for 2nd place), RANK() assigns 1, 2, 2, 4 (skipping 3), while DENSE_RANK() assigns 1, 2, 2, 3."
-                },
-                {
-                    "question": "Which SQL window function guarantees a unique sequential integer for every row, even if values are identical?",
-                    "options": ["ROW_NUMBER()", "RANK()", "DENSE_RANK()", "NTILE()"],
-                    "answer": "ROW_NUMBER()",
-                    "explanation": "ROW_NUMBER() assigns 1, 2, 3, 4... uniquely to every single row without considering ties or duplicates."
-                },
-                {
-                    "question": "Under what condition will ROW_NUMBER(), RANK(), and DENSE_RANK() produce identical results?",
-                    "options": [
-                        "When all rows have distinct, unique values for the ORDER BY column",
-                        "When all rows have duplicate values",
-                        "Only when using PARTITION BY on all columns",
-                        "When the table contains fewer than 10 rows"
-                    ],
-                    "answer": "When all rows have distinct, unique values for the ORDER BY column",
-                    "explanation": "When there are no duplicate or tied values in the ordered column, all three functions assign sequential integers 1, 2, 3... identically."
-                }
-            ]
+        # Dynamic fallback: extracts MCQs directly from the lecture text
+        return self._extract_dynamic_quiz(consolidated_knowledge)
 
-        return [
+    def _extract_dynamic_quiz(self, text: str) -> List[Dict[str, Any]]:
+        """Dynamically builds MCQ questions directly from the lecture sentences."""
+        mcqs = []
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', text) if len(s.strip().split()) >= 8]
+        for idx, s in enumerate(sentences[:6]):
+            words = s.split()
+            subject = " ".join(words[:4])
+            correct = s
+            options = [
+                correct,
+                f"It is unrelated to {subject} and applies only to legacy file systems.",
+                f"It disables automated processing across {subject}.",
+                f"It is superseded by incompatible hardware architectures."
+            ]
+            import random
+            random.shuffle(options)
+            mcqs.append({
+                "question": f"Which of the following statements accurately reflects the lecture principles?",
+                "options": options,
+                "answer": correct,
+                "explanation": f"According to the lecture transcript: '{s}'."
+            })
+        return mcqs or [
             {
-                "question": "What is the primary objective of the discussed topic?",
-                "options": ["To explain key principles and practical applications", "To discuss hardware assembly", "To configure network switches", "To format storage devices"],
-                "answer": "To explain key principles and practical applications",
-                "explanation": "The lecture covers core concepts, theoretical foundations, and practical examples."
+                "question": "What is the primary objective of this lecture?",
+                "options": ["To explain core principles and workflows", "To discuss hardware assembly", "To configure network switches", "To format storage devices"],
+                "answer": "To explain core principles and workflows",
+                "explanation": "The lecture covers core concepts and applications."
             }
         ]
 
@@ -954,7 +957,6 @@ Provide ONLY valid JSON. Do not wrap in markdown blocks or prefix in any way."""
         Generates Mermaid graph TD mindmap on-demand.
         Uses ONLY graph TD syntax for maximum Mermaid.js compatibility.
         """
-        # Truncate to avoid token limits
         knowledge_snippet = consolidated_knowledge[:6000]
         prompt = f"""Review this compiled knowledge base of a video lecture:
 ---
@@ -970,23 +972,13 @@ Rules:
 - Create 8-15 nodes covering the main concepts
 - Do NOT use the 'mindmap' keyword
 - Do NOT wrap output in ```mermaid code fences
-- Output ONLY raw Mermaid graph TD syntax, nothing else
-
-Example format:
-graph TD
-  A["Main Topic"] --> B["Subtopic 1"]
-  A --> C["Subtopic 2"]
-  B --> D["Detail"]
-  C --> E["Detail"]"""
+- Output ONLY raw Mermaid graph TD syntax, nothing else"""
 
         def _clean_mermaid(raw: str) -> str:
-            """Strip markdown fences, reasoning preambles, and ensure valid graph TD syntax."""
             if not raw or not raw.strip():
                 return ""
             
             cleaned = raw.strip()
-            
-            # Extract code block if wrapped in ```mermaid ... ```
             if "```mermaid" in cleaned:
                 parts = cleaned.split("```mermaid")
                 cleaned = parts[1].split("```")[0].strip()
@@ -995,7 +987,6 @@ graph TD
                 if len(parts) >= 2:
                     cleaned = parts[1].split("```")[0].strip()
 
-            # If there is reasoning preamble before 'graph TD' / 'graph LR' / 'flowchart'
             match = re.search(r'(graph\s+(?:TD|TB|LR|RL)|flowchart\s+(?:TD|TB|LR|RL))', cleaned, re.IGNORECASE)
             if match:
                 cleaned = cleaned[match.start():]
@@ -1005,24 +996,20 @@ graph TD
                 l = line.strip()
                 if not l:
                     continue
-                # Skip thinking process lines, comments, and markdown headers
                 if l.startswith("%%") or l.startswith("%{") or l.startswith("#"):
                     continue
                 if any(bad in l.lower() for bad in ["thinking process", "here's a", "here is", "let's break down", "in this flowchart"]):
                     continue
                 
-                # Auto-quote labels containing parentheses or commas if unquoted: A[Label (info)] -> A["Label (info)"]
                 l = re.sub(r'\[([^"\]]+[\(\),][^"\]]*)\]', r'["\1"]', l)
                 lines.append(l)
 
             if not lines:
                 return ""
 
-            # Ensure graph TD header is first
             if not lines[0].lower().startswith("graph ") and not lines[0].lower().startswith("flowchart "):
                 lines.insert(0, "graph TD")
 
-            # Check if there are actual connections (-->)
             has_connections = any("-->" in l or "---" in l for l in lines)
             if not has_connections and len(lines) < 3:
                 return ""
@@ -1070,59 +1057,38 @@ graph TD
         except Exception as e:
             pass
 
-        # Dynamic Topic-Aware Mermaid Mindmap Fallback
-        k_upper = consolidated_knowledge.upper()
-        if "ROW_NUMBER" in k_upper or "RANK" in k_upper or "DENSE_RANK" in k_upper:
-            return (
-                "graph TD\n"
-                "  A[\"SQL Window Functions\"] --> B[\"ROW_NUMBER()\"]\n"
-                "  A --> C[\"RANK()\"]\n"
-                "  A --> D[\"DENSE_RANK()\"]\n"
-                "  B --> E[\"Unique Sequential (1, 2, 3...)\"]\n"
-                "  C --> F[\"Skips on Ties (1, 2, 2, 4)\"]\n"
-                "  D --> G[\"Consecutive on Ties (1, 2, 2, 3)\"]\n"
-                "  A --> H[\"OVER (ORDER BY ...)\"]\n"
-                "  H --> I[\"Ordered Partitioning\"]\n"
-                "  H --> J[\"Salary / Hire Date Ranking\"]"
-            )
-        elif "PYSPARK" in k_upper or "SPARK" in k_upper or "DATAFRAME" in k_upper:
-            return (
-                "graph TD\n"
-                "  A[\"PySpark Data Engineering\"] --> B[\"DataFrame Transformations\"]\n"
-                "  A --> C[\"Optimization & Joins\"]\n"
-                "  A --> D[\"Production Scenarios\"]\n"
-                "  B --> E[\"Select, Filter & Aggregations\"]\n"
-                "  B --> F[\"Window Calculations\"]\n"
-                "  C --> G[\"Broadcast Joins\"]\n"
-                "  C --> H[\"Shuffle & Partitioning\"]\n"
-                "  D --> I[\"Data Skew Handling\"]\n"
-                "  D --> J[\"Execution Plan Analysis\"]"
-            )
-        elif "REDIS" in k_upper or "MYSQL" in k_upper or "SHOPIFY" in k_upper:
-            return (
-                "graph TD\n"
-                "  A[\"Shopify Inventory Architecture\"] --> B[\"Redis (Previous Architecture)\"]\n"
-                "  A --> C[\"MySQL (Target Migration)\"]\n"
-                "  B --> D[\"In-Memory Caching\"]\n"
-                "  B --> E[\"Flash Sale Sharding Limits\"]\n"
-                "  C --> F[\"ACID Compliance\"]\n"
-                "  C --> G[\"Row-Level Locking\"]\n"
-                "  A --> H[\"High Availability & Scale\"]"
-            )
+        # Dynamic fallback: builds Mermaid diagram directly from lecture text
+        return self._extract_dynamic_mindmap(consolidated_knowledge)
 
-        # General structured concept flowchart
-        return (
-            "graph TD\n"
-            "  A[\"Lecture Overview\"] --> B[\"Core Principles\"]\n"
-            "  A --> C[\"Technical Breakdown\"]\n"
-            "  A --> D[\"Practical Applications\"]\n"
-            "  B --> E[\"Definitions & Background\"]\n"
-            "  B --> F[\"Methodology\"]\n"
-            "  C --> G[\"Syntax & Implementation\"]\n"
-            "  C --> H[\"Optimization Techniques\"]\n"
-            "  D --> I[\"Case Studies\"]\n"
-            "  D --> J[\"Key Takeaways\"]"
-        )
+    def _extract_dynamic_mindmap(self, text: str) -> str:
+        """Dynamically extracts Mermaid graph TD nodes from actual lecture text."""
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        topics = []
+        for l in lines:
+            if l.startswith("#"):
+                clean = re.sub(r'^[#\s*_-]+', '', l).strip()
+                if clean and len(clean) < 45:
+                    topics.append(clean)
+            elif l.startswith(("-", "*", "•")):
+                clean = re.sub(r'^[-*•\s]+', '', l).strip()
+                if clean and len(clean) < 45 and not clean.startswith("!"):
+                    topics.append(clean)
+            if len(topics) >= 8:
+                break
+        
+        if len(topics) < 4:
+            sentences = [s.strip() for s in re.split(r'[.!?\n]+', text) if len(s.strip().split()) >= 4]
+            topics = [s[:40] for s in sentences[:6]]
+        
+        if not topics:
+            topics = ["Lecture Overview", "Foundational Concepts", "Core Methodology", "Key Takeaways"]
+            
+        root = topics[0].replace('"', "'") if topics else "Lecture Concepts"
+        mermaid_lines = ["graph TD", f'  Root["{root}"]']
+        for i, t in enumerate(topics[1:], 1):
+            clean_label = t.replace('"', "'")
+            mermaid_lines.append(f'  Root --> Node{i}["{clean_label}"]')
+        return "\n".join(mermaid_lines)
 
 
     def answer_chat(self, question: str, contexts: List[Dict[str, Any]], history: List[Dict[str, str]]) -> Dict[str, Any]:

@@ -192,10 +192,7 @@ def process_video_pipeline(self, video_id: str, user_id: int):
                 frames_dir = os.path.join(temp_dir, "frames")
                 raw_keyframes_list = video_service.extract_keyframes(local_video_path, frames_dir, interval_seconds=30)
                 raw_kf_count = len(raw_keyframes_list)
-                
-                # Visual image deduplication (removes identical slide stills)
-                deduped_keyframes_list = cleaner_service.deduplicate_keyframes(raw_keyframes_list, similarity_threshold=0.94)
-                print(f"[Pipeline Stage 2] Processing {len(deduped_keyframes_list)} unique keyframe slides (filtered from {raw_kf_count} raw frames)...")
+                print(f"[Pipeline Stage 2] Processing all {raw_kf_count} keyframes (extracted every 30s)...")
 
                 def _process_single_frame(item):
                     idx, (timestamp, local_frame_path) = item
@@ -225,48 +222,46 @@ def process_video_pipeline(self, video_id: str, user_id: int):
 
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=6) as executor:
-                    results = list(executor.map(_process_single_frame, enumerate(deduped_keyframes_list)))
+                    results = list(executor.map(_process_single_frame, enumerate(raw_keyframes_list)))
 
-                # Check sequential OCR deduplication
-                seen_ocrs = []
                 for r in results:
-                    is_dup_ocr = cleaner_service.is_duplicate_ocr(r["ocr_text"], seen_ocrs)
-                    if r["ocr_text"] and not is_dup_ocr:
-                        seen_ocrs.append(r["ocr_text"])
-
                     db_kf = Keyframe(
                         video_id=video_id,
                         timestamp=r["timestamp"],
                         s3_url=r["s3_url"],
-                        ocr_text="" if is_dup_ocr else r["ocr_text"],
+                        ocr_text=r["ocr_text"],
                         vision_description=r["vision_description"]
                     )
                     db.add(db_kf)
                     keyframes_db_records.append(db_kf)
 
                 db.commit()
-                print(f"[Pipeline Stage 2 Complete] Saved {len(keyframes_db_records)} unique keyframe slides.")
+                print(f"[Pipeline Stage 2 Complete] Saved {len(keyframes_db_records)} keyframe slides (30s intervals).")
         except Exception as kf_err:
             print(f"[Pipeline Stage 2 Notice] Keyframe extraction fallback: {kf_err}")
 
-        # -------------------------------------------------------------
-        # STAGE 3: Build Normalized Multimodal Knowledge & RAG Indexing
-        # -------------------------------------------------------------
-        keyframes_payload = [{
-            "timestamp": kf.timestamp,
-            "s3_url": kf.s3_url,
-            "vision_description": kf.vision_description,
-            "ocr_text": kf.ocr_text
-        } for kf in keyframes_db_records]
+        # Build keyframes payload for notes weaving
+        keyframes_payload = [
+            {
+                "timestamp": kf.timestamp,
+                "s3_url": kf.s3_url,
+                "vision_description": kf.vision_description,
+                "ocr_text": kf.ocr_text
+            }
+            for kf in keyframes_db_records
+        ]
 
+        # -------------------------------------------------------------
+        # STAGE 3: Multimodal Knowledge Normalization & Validation
+        # -------------------------------------------------------------
+        print("[Pipeline Stage 3] Consolidating multimodal knowledge base...")
         lecture_knowledge = cleaner_service.build_normalized_lecture_knowledge(
-            clean_transcripts=clean_segments,
-            keyframes_data=keyframes_payload,
-            video_title=video.title or ""
+            transcript_segments=clean_segments,
+            keyframes=keyframes_payload
         )
 
-        # Validate pipeline quality metrics
-        cleaner_service.validate_pipeline_metrics(
+        # Validate pipeline metrics
+        validation_report = cleaner_service.validate_pipeline_metrics(
             raw_transcript_count=len(raw_segments),
             clean_transcript_count=len(clean_segments),
             raw_keyframe_count=raw_kf_count or len(keyframes_db_records),
@@ -318,9 +313,9 @@ def process_video_pipeline(self, video_id: str, user_id: int):
         print("[Pipeline Stage 3 Complete] Built normalized pgvector RAG embeddings.")
 
         # -------------------------------------------------------------
-        # STAGE 4: High-Yield Notes & Downstream Synthesis
+        # STAGE 4: High-Yield Notes & Downstream Study Assets Synthesis
         # -------------------------------------------------------------
-        print("[Pipeline Stage 4] Synthesizing professional study notes from clean lecture knowledge...")
+        print("[Pipeline Stage 4] Synthesizing professional study notes, flashcards, quiz, and mindmap...")
         notes_package = llm_service.generate_notes_package(
             consolidated_knowledge=lecture_knowledge["timeline_text"][:12000],
             keyframes=keyframes_payload
@@ -350,6 +345,12 @@ def process_video_pipeline(self, video_id: str, user_id: int):
         else:
             revision_str = str(revision_raw) or "Revision study checklist generated."
 
+        # Synthesize downstream interactive study materials
+        knowledge_text = lecture_knowledge["timeline_text"][:12000]
+        generated_flashcards = llm_service.generate_flashcards(knowledge_text)
+        generated_quiz = llm_service.generate_quiz(knowledge_text)
+        generated_mindmap = llm_service.generate_mindmap(knowledge_text)
+
         db_notes = NoteOutput(
             video_id=video_id,
             summary_exec=notes_package.get("summary_exec", "Executive summary unavailable."),
@@ -357,13 +358,13 @@ def process_video_pipeline(self, video_id: str, user_id: int):
             revision_notes=revision_str,
             takeaways=takeaways_str,
             glossary=glossary_str,
-            flashcards=[],
-            mcqs=[],
-            mindmap=""
+            flashcards=generated_flashcards or [],
+            mcqs=generated_quiz or [],
+            mindmap=generated_mindmap or ""
         )
         db.add(db_notes)
         db.commit()
-        print("[Pipeline Stage 4 Complete] Saved clean NoteOutput.")
+        print(f"[Pipeline Stage 4 Complete] Saved NoteOutput with {len(generated_flashcards)} flashcards, {len(generated_quiz)} MCQs, and concept mindmap.")
 
         # Complete status update
         video.status = "completed"

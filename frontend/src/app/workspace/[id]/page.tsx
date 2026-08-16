@@ -495,6 +495,64 @@ export default function Workspace({ params }: PageProps) {
     }
   };
 
+  const fetchFlashcards = async (regenerate: boolean = false) => {
+    setFlashcardsLoading(true);
+    try {
+      const data = await api.get<{ question: string; answer: string }[]>(`/videos/${videoId}/flashcards${regenerate ? "?regenerate=true" : ""}`);
+      if (Array.isArray(data) && data.length > 0) {
+        setNotes((prev) => (prev ? { ...prev, flashcards: data } : prev));
+        setActiveCardIndex(0);
+        setIsCardFlipped(false);
+      }
+    } catch (e) {
+      console.error("Failed to load flashcards:", e);
+    } finally {
+      setFlashcardsLoading(false);
+    }
+  };
+
+  const fetchQuiz = async (regenerate: boolean = false) => {
+    setQuizLoading(true);
+    try {
+      const data = await api.get<MCQ[]>(`/videos/${videoId}/quiz${regenerate ? "?regenerate=true" : ""}`);
+      if (Array.isArray(data) && data.length > 0) {
+        setNotes((prev) => (prev ? { ...prev, mcqs: data } : prev));
+        setMcqAnswers({});
+        setSubmittedMcqs({});
+      }
+    } catch (e) {
+      console.error("Failed to load quiz:", e);
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
+  const fetchMindmap = async (regenerate: boolean = false) => {
+    setMindmapLoading(true);
+    try {
+      const res = await api.get<{ mindmap: string }>(`/videos/${videoId}/mindmap${regenerate ? "?regenerate=true" : ""}`);
+      if (res && res.mindmap) {
+        setNotes((prev) => (prev ? { ...prev, mindmap: res.mindmap } : prev));
+        await renderMermaid(res.mindmap);
+      }
+    } catch (e) {
+      console.error("Failed to load mindmap:", e);
+    } finally {
+      setMindmapLoading(false);
+    }
+  };
+
+  const handleTabChange = (tab: "summary" | "notes" | "flashcards" | "quiz" | "mindmap" | "slides") => {
+    setActiveTab(tab);
+    if (tab === "flashcards" && (!notes?.flashcards || notes.flashcards.length === 0)) {
+      fetchFlashcards();
+    } else if (tab === "quiz" && (!notes?.mcqs || notes.mcqs.length === 0)) {
+      fetchQuiz();
+    } else if (tab === "mindmap" && (!notes?.mindmap || !mindmapSvg)) {
+      fetchMindmap();
+    }
+  };
+
   const renderMermaid = async (chartCode: string) => {
     try {
       const cleanCode = chartCode.replace(/```mermaid/g, "").replace(/```/g, "").trim();
@@ -747,7 +805,7 @@ export default function Workspace({ params }: PageProps) {
             {(["summary", "notes", "flashcards", "quiz", "mindmap", "slides"] as const).map((tab) => (
               <button
                 key={tab}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => handleTabChange(tab)}
                 className={`px-4 py-2 rounded-xl font-bold text-xs transition cursor-pointer capitalize flex items-center gap-1.5 ${
                   activeTab === tab
                     ? "glossy-tab-active"
@@ -824,7 +882,25 @@ export default function Workspace({ params }: PageProps) {
                 {/* TAB 3: Flashcards */}
                 {activeTab === "flashcards" && (
                   <div className="flex flex-col items-center justify-center min-h-[380px] max-w-md mx-auto">
-                    {notes.flashcards && notes.flashcards.length > 0 ? (
+                    <div className="w-full flex items-center justify-between mb-4">
+                      <h2 className={`text-base font-bold flex items-center gap-2 ${isLight ? "text-slate-900" : "text-white"}`}>
+                        <Brain className="h-4 w-4 text-indigo-400" /> Active Recall Flashcards
+                      </h2>
+                      <button
+                        onClick={() => fetchFlashcards(true)}
+                        disabled={flashcardsLoading}
+                        className="flex items-center gap-1 px-3 py-1 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${flashcardsLoading ? "animate-spin" : ""}`} /> Regenerate
+                      </button>
+                    </div>
+
+                    {flashcardsLoading ? (
+                      <div className="flex flex-col items-center justify-center py-16 gap-3">
+                        <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+                        <span className="text-xs text-slate-400 font-medium">Generating active recall flashcards...</span>
+                      </div>
+                    ) : notes.flashcards && notes.flashcards.length > 0 ? (
                       <div className="w-full space-y-4">
                         <div className="flex items-center justify-between text-xs font-semibold text-slate-400">
                           <span>Card {activeCardIndex + 1} of {notes.flashcards.length}</span>
@@ -874,7 +950,15 @@ export default function Workspace({ params }: PageProps) {
                         </div>
                       </div>
                     ) : (
-                      <div className="text-slate-500 text-xs">No flashcards found.</div>
+                      <div className="text-center py-12 space-y-3">
+                        <p className="text-slate-400 text-xs">No flashcards found for this lecture.</p>
+                        <button
+                          onClick={() => fetchFlashcards(true)}
+                          className="px-4 py-2 rounded-xl glossy-tab-active text-xs font-bold transition shadow"
+                        >
+                          Generate Flashcard Deck
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -882,8 +966,25 @@ export default function Workspace({ params }: PageProps) {
                 {/* TAB 4: Quiz */}
                 {activeTab === "quiz" && (
                   <div className="space-y-6">
-                    <h2 className={`text-base font-bold ${isLight ? "text-slate-900" : "text-white"}`}>Interactive Assessment Quiz</h2>
-                    {notes.mcqs && notes.mcqs.length > 0 ? (
+                    <div className="flex items-center justify-between">
+                      <h2 className={`text-base font-bold flex items-center gap-2 ${isLight ? "text-slate-900" : "text-white"}`}>
+                        <HelpCircle className="h-4 w-4 text-indigo-400" /> Interactive Assessment Quiz
+                      </h2>
+                      <button
+                        onClick={() => fetchQuiz(true)}
+                        disabled={quizLoading}
+                        className="flex items-center gap-1 px-3 py-1 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${quizLoading ? "animate-spin" : ""}`} /> Regenerate
+                      </button>
+                    </div>
+
+                    {quizLoading ? (
+                      <div className="flex flex-col items-center justify-center py-16 gap-3">
+                        <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+                        <span className="text-xs text-slate-400 font-medium">Generating interactive quiz questions...</span>
+                      </div>
+                    ) : notes.mcqs && notes.mcqs.length > 0 ? (
                       notes.mcqs.map((mcq, mIdx) => {
                         const selected = mcqAnswers[mIdx];
                         const isSubmitted = submittedMcqs[mIdx];
@@ -938,7 +1039,15 @@ export default function Workspace({ params }: PageProps) {
                         );
                       })
                     ) : (
-                      <div className="text-slate-500 text-xs">No quiz questions generated.</div>
+                      <div className="text-center py-12 space-y-3">
+                        <p className="text-slate-400 text-xs">No quiz questions generated.</p>
+                        <button
+                          onClick={() => fetchQuiz(true)}
+                          className="px-4 py-2 rounded-xl glossy-tab-active text-xs font-bold transition shadow"
+                        >
+                          Generate Quiz
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -949,31 +1058,32 @@ export default function Workspace({ params }: PageProps) {
                     <div className="flex items-center justify-between">
                       <h2 className={`text-base font-bold ${isLight ? "text-slate-900" : "text-white"}`}>Interactive Concept Map</h2>
                       <button
-                        onClick={async () => {
-                          setMindmapLoading(true);
-                          try {
-                            const res = await api.get<{ mindmap: string }>(`/videos/${videoId}/mindmap?regenerate=true`);
-                            if (res.mindmap) {
-                              renderMermaid(res.mindmap);
-                            }
-                          } catch (e) {
-                            console.error(e);
-                          } finally {
-                            setMindmapLoading(false);
-                          }
-                        }}
+                        onClick={() => fetchMindmap(true)}
                         disabled={mindmapLoading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-xs font-bold transition cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 text-xs font-bold transition cursor-pointer disabled:opacity-50"
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${mindmapLoading ? "animate-spin" : ""}`} /> Regenerate Map
                       </button>
                     </div>
 
                     <div className={`p-6 rounded-2xl border overflow-x-auto flex items-center justify-center min-h-[400px] shadow-sm ${isLight ? "bg-white border-slate-200" : "glossy-card border-white/10"}`}>
-                      {mindmapSvg ? (
+                      {mindmapLoading ? (
+                        <div className="flex flex-col items-center justify-center gap-3">
+                          <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+                          <span className="text-xs text-slate-400 font-medium">Synthesizing interactive concept map...</span>
+                        </div>
+                      ) : mindmapSvg ? (
                         <div dangerouslySetInnerHTML={{ __html: mindmapSvg }} className="w-full flex justify-center" />
                       ) : (
-                        <div className="text-slate-500 text-xs">Concept map diagram not available.</div>
+                        <div className="text-center py-12 space-y-3">
+                          <p className="text-slate-400 text-xs">Concept map diagram not available.</p>
+                          <button
+                            onClick={() => fetchMindmap(true)}
+                            className="px-4 py-2 rounded-xl glossy-tab-active text-xs font-bold transition shadow"
+                          >
+                            Generate Concept Map
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
