@@ -2,7 +2,12 @@ from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, Boo
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.ext.compiler import compiles
 from app.core.db import Base
+
+@compiles(Vector, 'sqlite')
+def compile_vector_sqlite(type_, compiler, **kw):
+    return "TEXT"
 
 class User(Base):
     __tablename__ = "users"

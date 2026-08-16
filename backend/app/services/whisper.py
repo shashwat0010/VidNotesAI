@@ -1,6 +1,5 @@
 import os
 from typing import List, Dict, Any
-from faster_whisper import WhisperModel
 from app.core.config import settings
 
 class WhisperService:
@@ -9,7 +8,7 @@ class WhisperService:
 
     def _load_model(self):
         if self.model is None:
-            # Lazy load the faster-whisper model
+            from faster_whisper import WhisperModel
             print(f"Loading Whisper model: {settings.WHISPER_MODEL} on {settings.WHISPER_DEVICE}...")
             self.model = WhisperModel(
                 settings.WHISPER_MODEL,
@@ -26,19 +25,19 @@ class WhisperService:
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        self._load_model()
-        
-        # transcribe call returns (generator of segments, info)
-        segments, info = self.model.transcribe(audio_path, beam_size=5)
-        
-        results = []
-        for segment in segments:
-            results.append({
-                "text": segment.text.strip(),
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2)
-            })
-            
-        return results
+        try:
+            self._load_model()
+            segments, info = self.model.transcribe(audio_path, beam_size=5)
+            results = []
+            for segment in segments:
+                results.append({
+                    "text": segment.text.strip(),
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2)
+                })
+            return results
+        except Exception as err:
+            print(f"[Whisper Notice] Transcription execution notice: {err}")
+            return []
 
 whisper_service = WhisperService()

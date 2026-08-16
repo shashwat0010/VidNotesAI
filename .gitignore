@@ -34,6 +34,7 @@ Desktop.ini
 
 # App Specific Uploads, Downloads & Temp Data
 /backend/app/uploads/
+/backend/uploads/
 /backend/app/temp/
 /backend/temp/
 /uploads/
@@ -42,6 +43,10 @@ Desktop.ini
 *.mp3
 *.mp4
 *.wav
+*.pdf
+*.db
+*.sqlite
+*.sqlite3
 
 # Docker Local Volumizing & Data folders (if mapped locally)
 /postgres_data/

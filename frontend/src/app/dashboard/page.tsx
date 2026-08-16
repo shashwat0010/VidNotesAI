@@ -299,18 +299,18 @@ export default function Dashboard() {
           <div className="max-w-5xl mx-auto flex flex-col gap-8">
             
             {/* Ingestion Panel */}
-            <div className="glass-panel p-6 rounded-2xl border border-slate-900 flex flex-col gap-5">
-              <div className="flex items-center justify-between border-b border-slate-900 pb-3">
+            <div className="glossy-panel p-6 rounded-3xl border border-white/10 flex flex-col gap-5 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <Plus className="h-5 w-5 text-indigo-400" /> Convert New Media
                 </h2>
                 
-                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                <div className="flex bg-slate-900/80 p-0.5 rounded-xl border border-white/10">
                   <button
                     onClick={() => setActiveIngestTab("youtube")}
-                    className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
                       activeIngestTab === "youtube" 
-                        ? "bg-indigo-600 text-white shadow-sm" 
+                        ? "glossy-tab-active" 
                         : "text-slate-400 hover:text-white"
                     }`}
                   >
@@ -318,9 +318,9 @@ export default function Dashboard() {
                   </button>
                   <button
                     onClick={() => setActiveIngestTab("file")}
-                    className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
                       activeIngestTab === "file" 
-                        ? "bg-indigo-600 text-white shadow-sm" 
+                        ? "glossy-tab-active" 
                         : "text-slate-400 hover:text-white"
                     }`}
                   >
@@ -332,26 +332,26 @@ export default function Dashboard() {
               {activeIngestTab === "youtube" ? (
                 <form onSubmit={handleYoutubeSubmit} className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1 relative">
-                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                    <LinkIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <input
                       type="url"
                       value={youtubeUrl}
                       onChange={(e) => setYoutubeUrl(e.target.value)}
                       placeholder="https://www.youtube.com/watch?v=..."
                       required
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-slate-200"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950/60 border border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-slate-200 shadow-inner"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={ytLoading}
-                    className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="px-6 py-2.5 rounded-xl glossy-tab-active font-semibold text-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-lg"
                   >
                     {ytLoading ? <Loader2 className="animate-spin h-4 w-4" /> : "Process Link"}
                   </button>
                 </form>
               ) : (
-                <div className="border-2 border-dashed border-slate-800 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:border-indigo-500/50 transition relative">
+                <div className="border-2 border-dashed border-white/10 rounded-2xl p-8 flex flex-col items-center justify-center text-center hover:border-indigo-400/50 transition relative bg-slate-950/30">
                   <input
                     type="file"
                     accept="video/*,audio/*"
@@ -359,8 +359,8 @@ export default function Dashboard() {
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     disabled={uploadLoading}
                   />
-                  <div className="h-10 w-10 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 mb-3 border border-slate-800">
-                    {uploadLoading ? <Loader2 className="animate-spin h-5 w-5 text-indigo-500" /> : <Upload className="h-5 w-5" />}
+                  <div className="h-12 w-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-3 border border-indigo-500/20 shadow-inner">
+                    {uploadLoading ? <Loader2 className="animate-spin h-5 w-5 text-indigo-400" /> : <Upload className="h-5 w-5" />}
                   </div>
                   <span className="text-sm font-semibold text-slate-200">
                     {uploadLoading ? "Uploading & Initializing..." : "Select audio or video file"}
@@ -373,8 +373,8 @@ export default function Dashboard() {
             {/* List Header & Search */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
               <div>
-                <h1 className="text-xl font-bold text-white">Your Study Workspace</h1>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <h1 className="text-xl font-bold text-gradient">Your Study Workspace</h1>
+                <p className="text-xs text-slate-400 mt-0.5">
                   {selectedFolderId 
                     ? `Showing notes in ${folders.find(f => f.id === selectedFolderId)?.name}` 
                     : "Showing all processed lectures"}
@@ -382,20 +382,20 @@ export default function Dashboard() {
               </div>
 
               <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search notes title..."
-                  className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200"
+                  className="w-full pl-10 pr-4 py-2 bg-slate-900/80 border border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-200 shadow-inner"
                 />
               </div>
             </div>
 
             {/* Video Study Cards Grid */}
             {filteredVideos.length === 0 ? (
-              <div className="glass-panel p-12 text-center rounded-2xl border border-slate-900">
+              <div className="glossy-panel p-12 text-center rounded-3xl border border-white/10 shadow-2xl">
                 <VideoIcon className="h-12 w-12 text-slate-600 mx-auto mb-4" />
                 <h3 className="text-sm font-semibold text-slate-300">No notes found</h3>
                 <p className="text-xs text-slate-500 mt-1">Convert a new video file or YouTube URL above to begin.</p>
@@ -414,31 +414,31 @@ export default function Dashboard() {
                           router.push(`/workspace/${video.id}`);
                         }
                       }}
-                      className={`glass-card p-5 rounded-2xl border flex flex-col justify-between h-48 relative overflow-hidden ${
+                      className={`glossy-card p-5 rounded-3xl border flex flex-col justify-between h-48 relative overflow-hidden group cursor-pointer ${
                         isProcessing 
-                          ? "border-slate-900/60 opacity-80 cursor-default" 
+                          ? "border-white/10 opacity-80 cursor-default" 
                           : isFailed 
-                          ? "border-red-950/40 opacity-90 cursor-default"
-                          : "border-slate-900 cursor-pointer"
+                          ? "border-rose-500/30 opacity-90 cursor-default"
+                          : "border-white/10 hover:border-indigo-400/50"
                       }`}
                     >
                       {/* Top Bar inside card */}
                       <div className="flex items-start justify-between gap-4">
-                        <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-indigo-400 shrink-0">
+                        <div className="p-2.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 shrink-0 shadow-inner">
                           {video.url ? <VideoIcon className="h-5 w-5" /> : <FileAudio className="h-5 w-5" />}
                         </div>
                         
                         {/* Status Icon */}
                         {isProcessing ? (
-                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/40 text-indigo-400 text-[10px] font-bold glow-loader">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/40 text-indigo-400 text-[10px] font-bold border border-indigo-500/30 glow-loader">
                             <Loader2 className="animate-spin h-3 w-3" /> Processing
                           </div>
                         ) : isFailed ? (
-                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-950/40 text-red-400 text-[10px] font-bold border border-red-500/10">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-950/40 text-rose-400 text-[10px] font-bold border border-rose-500/20">
                             <XCircle className="h-3 w-3" /> Failed
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/40 text-emerald-400 text-[10px] font-bold border border-emerald-500/10">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/40 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">
                             <CheckCircle2 className="h-3 w-3" /> Processed
                           </div>
                         )}
@@ -446,26 +446,26 @@ export default function Dashboard() {
 
                       {/* Video Title */}
                       <div className="mt-4 flex-1">
-                        <h3 className="font-semibold text-sm text-slate-100 line-clamp-2 leading-snug group-hover:text-indigo-400 transition">
+                        <h3 className="font-semibold text-sm text-slate-100 line-clamp-2 leading-snug group-hover:text-indigo-300 transition">
                           {video.title}
                         </h3>
                         {isFailed && (
-                          <p className="text-[10px] text-red-400 line-clamp-1 mt-1 font-mono">
+                          <p className="text-[10px] text-rose-400 line-clamp-1 mt-1 font-mono">
                             {video.error_message || "Ingestion error"}
                           </p>
                         )}
                       </div>
 
                       {/* Card Footer Details */}
-                      <div className="mt-4 pt-3 border-t border-slate-900/60 flex items-center justify-between text-[11px] text-slate-500">
+                      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
                         <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" /> 
+                          <Clock className="h-3 w-3 text-slate-500" /> 
                           {video.duration ? `${Math.round(video.duration / 60)} min` : "unknown"}
                         </span>
                         
                         <button
                           onClick={(e) => handleDeleteVideo(video.id, e)}
-                          className="p-1 rounded hover:bg-slate-900 hover:text-red-400 transition cursor-pointer"
+                          className="p-1.5 rounded-lg hover:bg-white/10 hover:text-rose-400 transition cursor-pointer"
                           title="Delete Workspace"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

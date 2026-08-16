@@ -35,13 +35,23 @@ class VideoService:
                 }
             }
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return {
+                    "id": info.get("id"),
+                    "title": info.get("title", "YouTube Video"),
+                    "duration": info.get("duration", 0),
+                    "view_count": info.get("view_count", 0),
+                }
+        except Exception as e:
+            print(f"[Metadata] yt-dlp metadata extraction notice: {e}")
+            vid_id = VideoService.extract_youtube_id(url)
             return {
-                "id": info.get("id"),
-                "title": info.get("title", "YouTube Video"),
-                "duration": info.get("duration", 0),
-                "view_count": info.get("view_count", 0),
+                "id": vid_id,
+                "title": f"YouTube Video ({vid_id})",
+                "duration": 0,
+                "view_count": 0,
             }
 
     @staticmethod
@@ -57,7 +67,8 @@ class VideoService:
 
     @staticmethod
     def _parse_vtt(vtt_content: str) -> List[Dict[str, Any]]:
-        segments = []
+        from app.services.cleaner import cleaner_service
+        raw_segments = []
         lines = vtt_content.splitlines()
         
         current_time_range = None
@@ -72,14 +83,14 @@ class VideoService:
             if time_match:
                 if current_time_range and current_text_lines:
                     text = " ".join(current_text_lines)
-                    text = re.sub(r'<[^>]+>', '', text)
-                    text = " ".join(dict.fromkeys(text.split()))
-                    if text.strip():
-                        start_str = current_time_range[0]
-                        segments.append({
-                            "text": text.strip(),
-                            "start": VideoService._parse_vtt_time(start_str),
-                            "duration": 5.0
+                    text = re.sub(r'<[^>]+>', '', text).strip()
+                    if text:
+                        start_sec = VideoService._parse_vtt_time(current_time_range[0])
+                        end_sec = VideoService._parse_vtt_time(current_time_range[1])
+                        raw_segments.append({
+                            "text": text,
+                            "start": start_sec,
+                            "duration": max(1.0, end_sec - start_sec)
                         })
                 current_time_range = (time_match.group(1), time_match.group(2))
                 current_text_lines = []
@@ -89,23 +100,17 @@ class VideoService:
                     
         if current_time_range and current_text_lines:
             text = " ".join(current_text_lines)
-            text = re.sub(r'<[^>]+>', '', text)
-            text = " ".join(dict.fromkeys(text.split()))
-            if text.strip():
-                start_str = current_time_range[0]
-                segments.append({
-                    "text": text.strip(),
-                    "start": VideoService._parse_vtt_time(start_str),
-                    "duration": 5.0
+            text = re.sub(r'<[^>]+>', '', text).strip()
+            if text:
+                start_sec = VideoService._parse_vtt_time(current_time_range[0])
+                end_sec = VideoService._parse_vtt_time(current_time_range[1])
+                raw_segments.append({
+                    "text": text,
+                    "start": start_sec,
+                    "duration": max(1.0, end_sec - start_sec)
                 })
                 
-        cleaned_segments = []
-        last_text = ""
-        for seg in segments:
-            if seg["text"] != last_text:
-                cleaned_segments.append(seg)
-                last_text = seg["text"]
-        return cleaned_segments
+        return cleaner_service.clean_transcript_segments(raw_segments)
 
     @staticmethod
     def _get_requests_session() -> Any:
@@ -290,9 +295,9 @@ class VideoService:
 
     @staticmethod
     def download_youtube_video(url: str, output_path: str) -> str:
-        # Download best audio and video merge as mp4
+        # Download fast lightweight 480p stream for ultra-fast slide extraction
         ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best',
             'outtmpl': output_path,
             'quiet': True,
             'no_warnings': True,
@@ -361,18 +366,18 @@ class VideoService:
         return audio_output_path
 
     @staticmethod
-    def extract_keyframes(video_path: str, output_dir: str, interval_seconds: int = 10) -> List[Tuple[float, str]]:
+    def extract_keyframes(video_path: str, output_dir: str, interval_seconds: int = 30) -> List[Tuple[float, str]]:
         """
-        Extracts keyframes from a video file every interval_seconds.
+        Extracts keyframes from a video file every interval_seconds (default: 30s).
         Returns a list of tuples containing (timestamp_in_seconds, local_image_path).
         """
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
         os.makedirs(output_dir, exist_ok=True)
 
+        keyframes_list = []
         
-        # Frame extraction: extract 1 frame every X seconds
-        # Output named like: frame_0001.jpg, frame_0002.jpg
+        # 1. Try FFmpeg first
         output_pattern = os.path.join(output_dir, "frame_%04d.jpg")
         command = [
             "ffmpeg", "-y",
@@ -382,24 +387,49 @@ class VideoService:
             output_pattern
         ]
         
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode != 0:
-            # Let's see if file is just an audio file; if so, no frames can be extracted.
-            # We return empty list.
-            print(f"FFmpeg frame extraction log: {result.stderr}")
-            return []
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode == 0:
+                files = sorted([f for f in os.listdir(output_dir) if f.startswith("frame_") and f.endswith(".jpg")])
+                for idx, fname in enumerate(files):
+                    timestamp = float(idx * interval_seconds)
+                    keyframes_list.append((timestamp, os.path.join(output_dir, fname)))
+                if keyframes_list:
+                    print(f"[Keyframe Extraction] Extracted {len(keyframes_list)} frames via FFmpeg.")
+                    return keyframes_list
+        except Exception as e:
+            print(f"[Keyframe FFmpeg notice]: {e}")
 
-        # Find all generated files and correlate them to timestamps
-        files = sorted([f for f in os.listdir(output_dir) if f.startswith("frame_") and f.endswith(".jpg")])
-        keyframes = []
-        for idx, filename in enumerate(files):
-            # Since we extracted at 1 frame per interval_seconds:
-            # frame_0001.jpg is at approx: (idx + 0.5) * interval_seconds or idx * interval_seconds.
-            # Let's align frame_0001 to interval_seconds/2 or interval_seconds * idx.
-            timestamp = float(idx * interval_seconds)
-            keyframes.append((timestamp, os.path.join(output_dir, filename)))
-            
-        return keyframes
+        # 2. Fallback to OpenCV (cv2)
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                frame_interval = int(fps * interval_seconds)
+                count = 0
+                frame_idx = 0
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    if count % max(1, frame_interval) == 0:
+                        timestamp = float(count / fps)
+                        fname = f"frame_{frame_idx:04d}.jpg"
+                        fpath = os.path.join(output_dir, fname)
+                        cv2.imwrite(fpath, frame)
+                        keyframes_list.append((timestamp, fpath))
+                        frame_idx += 1
+                    count += 1
+                cap.release()
+        except Exception as cv_err:
+            print(f"[Keyframe OpenCV notice]: {cv_err}")
+
+        from app.services.cleaner import cleaner_service
+        raw_count = len(keyframes_list)
+        deduped_list = cleaner_service.deduplicate_keyframes(keyframes_list)
+        print(f"[Keyframe Deduplication] Filtered redundant static slides: {raw_count} raw frames -> {len(deduped_list)} unique keyframe slides.")
+        return deduped_list
 
     @staticmethod
     def get_video_duration(file_path: str) -> float:

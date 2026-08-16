@@ -1,65 +1,86 @@
 import io
+import os
+import re
+import requests
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 from app.models.models import NoteOutput
 
 class ExportService:
     @staticmethod
-    def generate_markdown(note: NoteOutput, title: str) -> str:
+    def generate_markdown(note: NoteOutput, title: str, keyframes: list = None) -> str:
         md = []
         md.append(f"# {title} - Study Notes")
         md.append("\n## Executive Summary\n")
-        md.append(note.summary_exec)
+        md.append(note.summary_exec or "")
         
         md.append("\n## Detailed Lecture Notes\n")
-        md.append(note.summary_detailed)
+        md.append(note.summary_detailed or "")
         
         md.append("\n## Revision & Review Checklist\n")
-        md.append(note.revision_notes)
+        md.append(note.revision_notes or "")
         
         md.append("\n## Key Takeaways\n")
-        md.append(note.takeaways)
+        md.append(note.takeaways or "")
         
         md.append("\n## Glossary of Terms\n")
-        md.append(note.glossary)
+        md.append(note.glossary or "")
         
-        md.append("\n## Flashcards\n")
-        for idx, card in enumerate(note.flashcards, 1):
-            md.append(f"**Q{idx}:** {card.get('question')}")
-            md.append(f"**A{idx}:** {card.get('answer')}\n")
-            
-        md.append("\n## Multiple Choice Quiz\n")
-        for idx, mcq in enumerate(note.mcqs, 1):
-            md.append(f"**Question {idx}:** {mcq.get('question')}")
-            for opt in mcq.get('options', []):
-                md.append(f"- {opt}")
-            md.append(f"\n*Correct Answer: {mcq.get('answer')}*")
-            md.append(f"*Explanation: {mcq.get('explanation')}*\n")
+        # Check if keyframes need to be appended
+        if keyframes:
+            detailed_txt = note.summary_detailed or ""
+            missing_kfs = [
+                kf for kf in keyframes
+                if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
+                and (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')) not in detailed_txt
+            ]
+            if missing_kfs:
+                md.append("\n## Extracted Keyframe Slides\n")
+                for kf in missing_kfs:
+                    url = kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')
+                    ts = kf.timestamp if hasattr(kf, 'timestamp') else kf.get('timestamp', 0)
+                    mins = int(ts // 60)
+                    secs = int(ts % 60)
+                    md.append(f"### Slide at {mins:02d}:{secs:02d}")
+                    md.append(f"![Slide at {mins:02d}:{secs:02d}]({url})\n")
+                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
+                    if ocr:
+                        md.append(f"**Slide Text:** {ocr}\n")
 
-        md.append("\n## Mermaid Mind Map\n")
-        md.append("```mermaid")
-        md.append(note.mindmap)
-        md.append("```")
+        if note.flashcards:
+            md.append("\n## Flashcards\n")
+            for idx, card in enumerate(note.flashcards, 1):
+                md.append(f"**Q{idx}:** {card.get('question')}")
+                md.append(f"**A{idx}:** {card.get('answer')}\n")
+            
+        if note.mcqs:
+            md.append("\n## Multiple Choice Quiz\n")
+            for idx, mcq in enumerate(note.mcqs, 1):
+                md.append(f"**Question {idx}:** {mcq.get('question')}")
+                for opt in mcq.get('options', []):
+                    md.append(f"- {opt}")
+                md.append(f"\n*Correct Answer: {mcq.get('answer')}*")
+                md.append(f"*Explanation: {mcq.get('explanation')}*\n")
+
+        if note.mindmap:
+            md.append("\n## Mermaid Mind Map\n")
+            md.append("```mermaid")
+            md.append(note.mindmap)
+            md.append("```")
 
         return "\n".join(md)
 
     @staticmethod
     def generate_docx(note: NoteOutput, title: str, keyframes: list = None) -> bytes:
-        import io
-        import re
-        import requests
-        from docx import Document
-        from docx.shared import Inches, Pt, RGBColor
-
         doc = Document()
         
-        # Add basic document configurations
-        sections = doc.sections
-        for section in sections:
+        # Configure margins
+        for section in doc.sections:
             section.top_margin = Inches(1)
             section.bottom_margin = Inches(1)
             section.left_margin = Inches(1)
@@ -77,29 +98,57 @@ class ExportService:
         run.font.size = Pt(24)
         run.font.color.rgb = RGBColor(31, 41, 55)
 
-        # Setup keyframes map
-        MINIO_BASE = "http://minio:9000"
-        kf_url_map = {}
-        if keyframes:
-            for kf in keyframes:
-                url = kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url') if isinstance(kf, dict) else None
-                if url:
-                    kf_url_map[url] = f"{MINIO_BASE}{url}"
+        uploads_base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
 
-        def _fetch_img_stream(url: str):
-            try:
-                resp = requests.get(url, timeout=8)
-                resp.raise_for_status()
-                return io.BytesIO(resp.content)
-            except Exception as e:
-                print(f"[DOCX] Image fetch failed {url}: {e}")
+        def _get_clean_s3_key(url: str) -> str:
+            if not url:
+                return ""
+            clean = url.split("?")[0]
+            if ".amazonaws.com/" in clean:
+                clean = clean.split(".amazonaws.com/")[1]
+            clean = clean.replace("/uploads/", "").replace("/vidnotes-storage/", "").replace("uploads/", "").replace("vidnotes-storage/", "").lstrip("/")
+            return clean
+
+        def _get_docx_img_stream(url: str):
+            if not url:
                 return None
+            key = _get_clean_s3_key(url)
+            
+            # 1. Try local filesystem cache first
+            candidates = [
+                os.path.join(uploads_base, key),
+                os.path.join(uploads_base, "keyframes", key),
+            ]
+            for fp in candidates:
+                if os.path.exists(fp) and os.path.isfile(fp):
+                    try:
+                        with open(fp, "rb") as f:
+                            return io.BytesIO(f.read())
+                    except Exception:
+                        pass
+            
+            # 2. Try authenticated AWS S3 SDK
+            if s3_service.s3 and settings.S3_BUCKET_NAME and key:
+                try:
+                    obj = s3_service.s3.get_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+                    return io.BytesIO(obj['Body'].read())
+                except Exception as s3_err:
+                    print(f"[DOCX S3 Fetch Notice]: {s3_err}")
+
+            # 3. Try HTTP request
+            if url.startswith("http://") or url.startswith("https://"):
+                try:
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        return io.BytesIO(resp.content)
+                except Exception:
+                    pass
+            return None
 
         def _parse_md_docx(text: str):
             if not isinstance(text, str):
                 return
-            lines = text.splitlines()
-            for line in lines:
+            for line in text.splitlines():
                 l_str = line.strip()
                 if not l_str:
                     continue
@@ -111,25 +160,22 @@ class ExportService:
                     last_idx = 0
                     for match in matches:
                         start_pos, end_pos = match.span()
-                        txt = l_str[last_idx:start_pos].strip()
-                        if txt:
-                            doc.add_paragraph(txt)
-                        
+                        txt_before = l_str[last_idx:start_pos].strip()
+                        if txt_before:
+                            doc.add_paragraph(txt_before)
                         caption_text = match.group(1)
                         img_url = match.group(2)
-                        fetch_url = kf_url_map.get(img_url, f"{MINIO_BASE}{img_url}" if img_url.startswith('/') else None)
-                        if fetch_url:
-                            stream = _fetch_img_stream(fetch_url)
-                            if stream:
-                                try:
-                                    doc.add_picture(stream, width=Inches(4.5))
-                                    if caption_text:
-                                        cap_p = doc.add_paragraph()
-                                        cap_run = cap_p.add_run(caption_text)
-                                        cap_run.italic = True
-                                        cap_run.font.size = Pt(9)
-                                except Exception as e:
-                                    print(f"[DOCX] Add picture failed: {e}")
+                        stream = _get_docx_img_stream(img_url)
+                        if stream:
+                            try:
+                                doc.add_picture(stream, width=Inches(4.5))
+                                if caption_text:
+                                    cap_p = doc.add_paragraph()
+                                    cap_run = cap_p.add_run(caption_text)
+                                    cap_run.italic = True
+                                    cap_run.font.size = Pt(9)
+                            except Exception as e:
+                                print(f"[DOCX] Add picture failed: {e}")
                         last_idx = end_pos
                     txt_after = l_str[last_idx:].strip()
                     if txt_after:
@@ -137,7 +183,10 @@ class ExportService:
                     continue
 
                 # Headings
-                if l_str.startswith("### "):
+                if l_str.startswith("#### "):
+                    p = doc.add_heading(l_str[5:], level=4)
+                    p.style.font.color.rgb = RGBColor(75, 85, 99)
+                elif l_str.startswith("### "):
                     p = doc.add_heading(l_str[4:], level=3)
                     p.style.font.color.rgb = RGBColor(55, 65, 81)
                 elif l_str.startswith("## "):
@@ -174,6 +223,32 @@ class ExportService:
         doc.add_heading("Glossary of Terms", level=1)
         _parse_md_docx(note.glossary)
 
+        # Append keyframes if not already inside detailed notes
+        if keyframes:
+            detailed_txt = note.summary_detailed or ""
+            missing_kfs = [
+                kf for kf in keyframes
+                if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
+                and (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')) not in detailed_txt
+            ]
+            if missing_kfs:
+                doc.add_heading("Extracted Keyframe Slides", level=1)
+                for kf in missing_kfs:
+                    url = kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')
+                    ts = kf.timestamp if hasattr(kf, 'timestamp') else kf.get('timestamp', 0)
+                    mins = int(ts // 60)
+                    secs = int(ts % 60)
+                    doc.add_heading(f"Slide at {mins:02d}:{secs:02d}", level=2)
+                    stream = _get_docx_img_stream(url)
+                    if stream:
+                        try:
+                            doc.add_picture(stream, width=Inches(4.5))
+                        except Exception as e:
+                            print(f"[DOCX] Slide picture add notice: {e}")
+                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
+                    if ocr:
+                        doc.add_paragraph(f"Slide Text: {ocr}")
+
         # Flashcards
         if note.flashcards:
             doc.add_heading("Flashcards", level=1)
@@ -198,20 +273,13 @@ class ExportService:
                 p.add_run("Explanation: ").italic = True
                 p.add_run(f"{mcq.get('explanation')}")
 
-        # Save to buffer
         file_stream = io.BytesIO()
         doc.save(file_stream)
         file_stream.seek(0)
         return file_stream.getvalue()
 
-
     @staticmethod
     def generate_pdf(note: NoteOutput, title: str, keyframes: list = None) -> bytes:
-        import re
-        import requests
-        from reportlab.platypus import Image as RLImage
-        from reportlab.lib.units import inch
-
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -262,19 +330,19 @@ class ExportService:
             textColor=colors.HexColor('#6b7280'),
             alignment=1, spaceAfter=8  # centered
         )
+        code_style = ParagraphStyle(
+            'Code', parent=styles['Normal'],
+            fontName='Courier', fontSize=8.5, leading=12,
+            textColor=colors.HexColor('#e2e8f0'),
+            spaceBefore=2, spaceAfter=2
+        )
 
-        # Build a quick lookup: url path → local MinIO fetch URL
-        MINIO_BASE = "http://minio:9000"
-        kf_url_map = {}
-        if keyframes:
-            for kf in keyframes:
-                url = kf.s3_url  # e.g. /vidnotes-storage/keyframes/.../frame_0001.jpg
-                kf_url_map[url] = f"{MINIO_BASE}{url}"
+        uploads_base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
 
         def _inline_md(text: str) -> str:
-            """Convert inline markdown (**bold**, *italic*, `code`) to ReportLab HTML."""
-            # Escape XML special chars first (except already-added tags)
-            text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            if not text:
+                return ""
+            text = str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             text = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', text)
             text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
             text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
@@ -282,102 +350,143 @@ class ExportService:
             return text
 
         def _fetch_image(url: str):
-            """Fetch image bytes from MinIO and return an RLImage or None."""
-            try:
-                resp = requests.get(url, timeout=8)
-                resp.raise_for_status()
-                img_buf = io.BytesIO(resp.content)
-                img = RLImage(img_buf, width=4.5 * inch, height=2.8 * inch, kind='proportional')
-                return img
-            except Exception as e:
-                print(f"[PDF] Could not fetch image {url}: {e}")
+            if not url:
                 return None
+            
+            clean = url.split("?")[0]
+            if ".amazonaws.com/" in clean:
+                clean = clean.split(".amazonaws.com/")[1]
+            key = clean.replace("/uploads/", "").replace("/vidnotes-storage/", "").replace("uploads/", "").replace("vidnotes-storage/", "").lstrip("/")
 
-        def _safe_str(value) -> str:
-            """Convert any value (str, dict, list) to a clean string."""
-            if isinstance(value, str):
-                return value
-            if isinstance(value, (dict, list)):
-                import json as _json
+            # 1. Check local cached file first
+            candidates = [
+                os.path.join(uploads_base, key),
+                os.path.join(uploads_base, "keyframes", key),
+            ]
+            for fp in candidates:
+                if os.path.exists(fp) and os.path.isfile(fp):
+                    try:
+                        with open(fp, "rb") as f:
+                            img_buf = io.BytesIO(f.read())
+                        return RLImage(img_buf, width=4.5 * inch, height=2.8 * inch, kind='proportional')
+                    except Exception as e:
+                        print(f"[PDF] Local image read notice: {e}")
+
+            # 2. Fetch directly from authenticated AWS S3
+            if s3_service.s3 and settings.S3_BUCKET_NAME and key:
                 try:
-                    # Try to convert structured data to readable text
-                    if isinstance(value, list):
-                        parts = []
-                        for item in value:
-                            if isinstance(item, dict):
-                                parts.append(', '.join(f"{k}: {v}" for k, v in item.items()))
-                            else:
-                                parts.append(str(item))
-                        return '\n'.join(parts)
-                    elif isinstance(value, dict):
-                        return '\n'.join(f"**{k}**: {v}" for k, v in value.items())
-                except Exception:
-                    pass
-                return _json.dumps(value, indent=2)
-            return str(value) if value else ""
+                    obj = s3_service.s3.get_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+                    img_buf = io.BytesIO(obj['Body'].read())
+                    return RLImage(img_buf, width=4.5 * inch, height=2.8 * inch, kind='proportional')
+                except Exception as s3_err:
+                    print(f"[PDF S3 Fetch Notice]: {s3_err}")
+
+            # 3. HTTP fetch fallback
+            if url.startswith("http://") or url.startswith("https://"):
+                try:
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        img_buf = io.BytesIO(resp.content)
+                        return RLImage(img_buf, width=4.5 * inch, height=2.8 * inch, kind='proportional')
+                except Exception as e:
+                    print(f"[PDF] Could not fetch image {url}: {e}")
+            return None
 
         def _parse_markdown(text: str, story: list):
-            """Parse markdown text line-by-line and append PDF elements to story."""
-            text = _safe_str(text)
-            # Handle inline image refs before line processing
-            lines = text.splitlines()
+            lines = str(text or "").splitlines()
             i = 0
             while i < len(lines):
                 line = lines[i]
 
+                # Code block: ```lang ... ```
+                if line.strip().startswith("```"):
+                    code_lines = []
+                    i += 1
+                    while i < len(lines) and not lines[i].strip().startswith("```"):
+                        code_lines.append(lines[i])
+                        i += 1
+                    if i < len(lines):
+                        i += 1
+                    code_text = "\n".join(code_lines)
+                    code_html = str(code_text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br/>')
+                    code_p = Paragraph(f"<font name='Courier' size=8.5 color='#e2e8f0'>{code_html}</font>", code_style)
+                    code_table = Table([[code_p]], colWidths=[letter[0] - 120])
+                    code_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#0f172a')),
+                        ('TOPPADDING', (0, 0), (-1, -1), 8),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#1e293b')),
+                    ]))
+                    story.append(Spacer(1, 4))
+                    story.append(code_table)
+                    story.append(Spacer(1, 6))
+                    continue
+
                 # Image: ![caption](url)
-                img_match = re.match(r'!\[([^\]]*)\]\(([^)]+)\)', line.strip())
+                img_match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', line)
                 if img_match:
                     caption_text = img_match.group(1)
                     img_url = img_match.group(2)
-                    # Map relative URL to internal MinIO URL
-                    fetch_url = kf_url_map.get(img_url, f"{MINIO_BASE}{img_url}" if img_url.startswith('/') else None)
-                    if fetch_url:
-                        img = _fetch_image(fetch_url)
-                        if img:
-                            story.append(Spacer(1, 6))
-                            story.append(img)
-                            if caption_text:
-                                story.append(Paragraph(caption_text, caption_style))
-                            story.append(Spacer(1, 6))
+                    img = _fetch_image(img_url)
+                    if img:
+                        story.append(Spacer(1, 6))
+                        story.append(img)
+                        if caption_text:
+                            story.append(Paragraph(caption_text, caption_style))
+                        story.append(Spacer(1, 6))
                     i += 1
                     continue
 
-                # H1: # Heading
-                if re.match(r'^#\s+(.+)', line):
-                    text_content = re.match(r'^#\s+(.+)', line).group(1)
-                    story.append(Paragraph(_inline_md(text_content), h2_style))
+                # Headings
+                if re.match(r'^####\s+(.+)', line):
+                    text_content = re.match(r'^####\s+(.+)', line).group(1)
+                    story.append(Paragraph(_inline_md(text_content), h3_style))
                     i += 1
                     continue
 
-                # H2: ## Heading
-                if re.match(r'^##\s+(.+)', line):
-                    text_content = re.match(r'^##\s+(.+)', line).group(1)
-                    story.append(Paragraph(_inline_md(text_content), h2_style))
-                    i += 1
-                    continue
-
-                # H3: ### Heading
                 if re.match(r'^###\s+(.+)', line):
                     text_content = re.match(r'^###\s+(.+)', line).group(1)
                     story.append(Paragraph(_inline_md(text_content), h3_style))
                     i += 1
                     continue
 
-                # Horizontal rule: ---
-                if re.match(r'^---+\s*$', line.strip()):
-                    story.append(Spacer(1, 4))
+                if re.match(r'^##\s+(.+)', line):
+                    text_content = re.match(r'^##\s+(.+)', line).group(1)
+                    story.append(Paragraph(_inline_md(text_content), h2_style))
                     i += 1
                     continue
 
-                # Bullet: - item or * item
-                if re.match(r'^[\-\*]\s+(.+)', line):
-                    text_content = re.match(r'^[\-\*]\s+(.+)', line).group(1)
-                    story.append(Paragraph(f"• {_inline_md(text_content)}", bullet_style))
+                if re.match(r'^#\s+(.+)', line):
+                    text_content = re.match(r'^#\s+(.+)', line).group(1)
+                    story.append(Paragraph(_inline_md(text_content), h1_style))
                     i += 1
                     continue
 
-                # Numbered list: 1. item
+                # Horizontal rule
+                if re.match(r'^---+$', line.strip()):
+                    story.append(Spacer(1, 6))
+                    t = Table([['']], colWidths=[letter[0] - 120])
+                    t.setStyle(TableStyle([
+                        ('LINEABOVE', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+                        ('TOPPADDING', (0, 0), (-1, -1), 0),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                    ]))
+                    story.append(t)
+                    story.append(Spacer(1, 6))
+                    i += 1
+                    continue
+
+                # Bullet items
+                bullet_match = re.match(r'^[-*]\s+(.+)', line)
+                if bullet_match:
+                    text_content = bullet_match.group(1)
+                    story.append(Paragraph(f"&bull;&nbsp;&nbsp;{_inline_md(text_content)}", bullet_style))
+                    i += 1
+                    continue
+
+                # Numbered list
                 num_match = re.match(r'^(\d+)\.\s+(.+)', line)
                 if num_match:
                     num = num_match.group(1)
@@ -386,7 +495,7 @@ class ExportService:
                     i += 1
                     continue
 
-                # Empty line → small spacer
+                # Empty line
                 if not line.strip():
                     story.append(Spacer(1, 5))
                     i += 1
@@ -398,38 +507,60 @@ class ExportService:
 
         story = []
 
-        # ── Title ──────────────────────────────────────────────────────────────
+        # Title
         story.append(Paragraph(f"{title}", title_style))
         story.append(Paragraph("Study Notes", ParagraphStyle('Sub', parent=body_style,
             fontName='Helvetica-Oblique', fontSize=11, textColor=colors.HexColor('#6b7280'), spaceAfter=20)))
         story.append(Spacer(1, 12))
 
-        # ── Executive Summary ──────────────────────────────────────────────────
+        # Sections
         story.append(Paragraph("Executive Summary", h1_style))
         _parse_markdown(note.summary_exec, story)
         story.append(Spacer(1, 10))
 
-        # ── Detailed Lecture Notes (with inline slide images) ──────────────────
         story.append(Paragraph("Detailed Lecture Notes", h1_style))
         _parse_markdown(note.summary_detailed, story)
         story.append(Spacer(1, 10))
 
-        # ── Revision Guide ─────────────────────────────────────────────────────
         story.append(Paragraph("Revision Guide", h1_style))
         _parse_markdown(note.revision_notes, story)
         story.append(Spacer(1, 10))
 
-        # ── Key Takeaways ──────────────────────────────────────────────────────
         story.append(Paragraph("Key Takeaways", h1_style))
         _parse_markdown(note.takeaways, story)
         story.append(Spacer(1, 10))
 
-        # ── Glossary ───────────────────────────────────────────────────────────
         story.append(Paragraph("Glossary of Terms", h1_style))
         _parse_markdown(note.glossary, story)
         story.append(Spacer(1, 10))
 
-        # ── Flashcards ─────────────────────────────────────────────────────────
+        # Keyframes slides
+        if keyframes:
+            detailed_txt = note.summary_detailed or ""
+            missing_kfs = [
+                kf for kf in keyframes
+                if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
+                and (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')) not in detailed_txt
+            ]
+            if missing_kfs:
+                story.append(Paragraph("Extracted Keyframe Slides", h1_style))
+                for kf in missing_kfs:
+                    url = kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url')
+                    ts = kf.timestamp if hasattr(kf, 'timestamp') else kf.get('timestamp', 0)
+                    mins = int(ts // 60)
+                    secs = int(ts % 60)
+                    story.append(Paragraph(f"Slide at {mins:02d}:{secs:02d}", h2_style))
+                    img = _fetch_image(url)
+                    if img:
+                        story.append(Spacer(1, 4))
+                        story.append(img)
+                        story.append(Spacer(1, 4))
+                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
+                    if ocr:
+                        story.append(Paragraph(f"<b>Slide Text:</b> {_inline_md(ocr)}", body_style))
+                    story.append(Spacer(1, 8))
+
+        # Flashcards
         if note.flashcards:
             story.append(Paragraph("Flashcards", h1_style))
             for idx, card in enumerate(note.flashcards, 1):
@@ -439,7 +570,7 @@ class ExportService:
                 story.append(Paragraph(f"<b>A{idx}:</b> {a}", body_style))
                 story.append(Spacer(1, 6))
 
-        # ── Quiz ───────────────────────────────────────────────────────────────
+        # Quiz
         if note.mcqs:
             story.append(Spacer(1, 10))
             story.append(Paragraph("Multiple Choice Quiz", h1_style))
@@ -457,6 +588,5 @@ class ExportService:
         doc.build(story)
         buffer.seek(0)
         return buffer.getvalue()
-
 
 export_service = ExportService()

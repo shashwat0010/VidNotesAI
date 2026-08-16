@@ -1,8 +1,5 @@
 import os
 from typing import Optional
-import easyocr
-import numpy as np
-from PIL import Image
 
 class OCRService:
     def __init__(self):
@@ -10,16 +7,14 @@ class OCRService:
 
     def _load_reader(self):
         if self.reader is None:
+            import easyocr
             print("Initializing EasyOCR reader...")
-            # We initialize EasyOCR with English language.
-            # You can add other languages if needed.
-            # gpu=False to run on CPU by default in standard Docker container
             self.reader = easyocr.Reader(['en'], gpu=False)
             print("EasyOCR reader initialized.")
 
     def extract_text(self, image_path: str) -> str:
         """
-        Runs EasyOCR on an image and returns the combined text.
+        Runs fast EasyOCR on an image and returns the combined text.
         """
         if not os.path.exists(image_path):
             return ""
@@ -27,19 +22,15 @@ class OCRService:
         try:
             self._load_reader()
             
-            # Read text
-            results = self.reader.readtext(image_path)
-            
-            # Combine text results
-            # results is a list of tuples: (bounding box, text, confidence)
-            extracted_lines = []
-            for result in results:
-                text = result[1]
-                extracted_lines.append(text)
-                
-            return "\n".join(extracted_lines)
+            # Fast text extraction with detail=0 (returns strings directly without polygon computations)
+            results = self.reader.readtext(image_path, detail=0, paragraph=True)
+            if results:
+                # Filter out pure noise lines
+                cleaned = [t.strip() for t in results if len(t.strip()) > 1]
+                return "\n".join(cleaned)
+            return ""
         except Exception as e:
-            print(f"OCR failed for {image_path}: {e}")
+            print(f"[OCR Notice] OCR fast-read on {os.path.basename(image_path)}: {e}")
             return ""
 
 ocr_service = OCRService()
