@@ -57,7 +57,7 @@ class PipelineCleaner:
     def is_gibberish_or_broken(text: str) -> bool:
         """
         Generic content-independent classifier for corrupted, nonsensical, or fragmented text.
-        Evaluates character entropy, noise ratios, lexical repetition, and malformed sequences.
+        Evaluates character entropy, noise ratios, lexical repetition, irregular casing, and malformed tokens.
         """
         if not text or not isinstance(text, str):
             return True
@@ -70,9 +70,9 @@ class PipelineCleaner:
         if not any(c.isalnum() for c in t):
             return True
 
-        # Fragment with fewer than 2 alphanumeric characters
+        # Fragment with fewer than 3 alphanumeric characters unless it's a single valid word
         alpha_count = sum(1 for c in t if c.isalnum())
-        if alpha_count < 2:
+        if alpha_count < 3 and not (len(t) >= 1 and t.isalnum()):
             return True
         
         # Extreme repetition of single character (e.g. "......", "aaaaaaa", "------")
@@ -80,34 +80,142 @@ class PipelineCleaner:
             return True
             
         # Non-alphanumeric noise ratio check (allowing standard punctuation and code symbols)
-        allowed_chars = set("=+-*/<>():;{}[]_.,!?'\"%#$@&|\\~`^")
+        allowed_chars = set("=+-*/<>():;{}[]_.,!?'\"%#$@&|\n\t ")
         non_printable_count = sum(1 for c in t if not c.isalnum() and c not in allowed_chars and not c.isspace())
-        if len(t) > 0 and (non_printable_count / len(t)) > 0.25:
+        if len(t) > 0 and (non_printable_count / len(t)) > 0.15:
             return True
             
-        # High unprintable / corrupt symbol ratio (e.g. "~`|^\\_")
-        symbol_count = sum(1 for c in t if c in "~`|^\\_")
-        if len(t) > 0 and (symbol_count / len(t)) > 0.08:
+        # High unprintable / corrupt symbol ratio (only corrupt symbols: ~, ^, \, |)
+        corrupt_symbol_count = sum(1 for c in t if c in "~^\\|`")
+        if corrupt_symbol_count > 0 and (corrupt_symbol_count / len(t)) > 0.03:
             return True
 
-        words = t.split()
+        # Token-level corruption checks
+        words = re.findall(r'\b[\w\d_]+\b', t)
+        if not words and len(t) > 5:
+            return True
+
+        gibberish_word_count = 0
+        vowels = set("aeiouyAEIOUY")
+
+        for w in words:
+            # 1. Identifier starting with a digit followed by letters (e.g. "7solInier", "2df", "4name")
+            if re.match(r'^\d+[A-Za-z]', w):
+                gibberish_word_count += 1
+                continue
+            
+            # 2. Letters sandwiched between digits (e.g. "14Jf4", "3x9kPZ")
+            if re.search(r'\d+[A-Za-z]+\d+', w):
+                gibberish_word_count += 1
+                continue
+
+            # 3. Token ending with digits attached to short letters (e.g. "Ren44", "test33a")
+            if re.search(r'[A-Za-z]+\d+$', w) and len(w) <= 6 and not w.startswith(('v', 'V', 'utf', 'UTF', 'sha', 'SHA', 'md', 'MD', 'h', 'H', 'mp', 'MP', 'r', 'R')):
+                gibberish_word_count += 1
+                continue
+
+            # 4. Irregular mixed casing in short non-code words (e.g. "solInier", "SCLie", "EfaL")
+            if len(w) >= 4 and not w.isupper() and not w.islower() and not w.istitle():
+                # Allow standard programming identifiers with underscores (e.g. compute_loss)
+                if "_" not in w:
+                    inner_caps = [i for i, c in enumerate(w[1:], 1) if c.isupper()]
+                    if inner_caps and not (len(inner_caps) == 1 and inner_caps[0] > 1 and w[inner_caps[0]-1].islower()):
+                        gibberish_word_count += 1
+                        continue
+                    elif len(inner_caps) > 1 and not w.startswith(('get', 'set', 'is', 'has', 'to')):
+                        gibberish_word_count += 1
+                        continue
+
+            # 5. Consonant cluster anomaly: words with 5+ consonants and no vowels
+            if w.isalpha() and len(w) >= 5 and "_" not in w:
+                vowel_count = sum(1 for char in w if char in vowels)
+                if vowel_count == 0:
+                    gibberish_word_count += 1
+                    continue
+
+        if words:
+            # If 25% or more words are corrupted/gibberish, the entire block is broken
+            if (gibberish_word_count / len(words)) >= 0.25:
+                return True
+
+        # Unusually high repetitive word ratio in a single segment (e.g. ASR loop: "word word word word")
         if len(words) >= 4:
             unique_words = set(w.lower() for w in words)
             if (len(unique_words) / len(words)) < 0.35:
                 return True
-                
-        # Consonant cluster anomaly: words with 6+ consonants and no vowels (excluding digit strings)
-        vowels = set("aeiouyAEIOUY")
-        for w in words:
-            if w.isalpha() and len(w) >= 6:
-                vowel_count = sum(1 for char in w if char in vowels)
-                if vowel_count == 0:
-                    return True
-            # Mixed irregular digit-letter token noise (e.g. "14Jf4", "3x9kPZ")
-            if re.search(r'^\d+[A-Za-z]+\d+[A-Za-z]*$', w) or re.search(r'^[A-Za-z]+\d+[A-Za-z]+\d+', w):
-                return True
 
         return False
+
+    @staticmethod
+    def is_genuine_code(text: str) -> bool:
+        """
+        Determines whether a block of text represents authentic, syntactically coherent code.
+        Returns False for raw slide notes, broken OCR fragments, or plain visual descriptions.
+        """
+        if not text or not isinstance(text, str):
+            return False
+        
+        t = text.strip()
+        if len(t) < 15 or PipelineCleaner.is_gibberish_or_broken(t):
+            return False
+            
+        lines = [l.strip() for l in t.splitlines() if l.strip()]
+        if not lines:
+            return False
+
+        # Any corrupt line disqualifies the block from being clean code
+        for l in lines:
+            if PipelineCleaner.is_gibberish_or_broken(l):
+                return False
+
+        # Common multi-token syntax patterns across SQL, Python, JS, TypeScript, Java, C++, Go, Rust
+        code_patterns = [
+            # SQL
+            r'\bSELECT\b[\s\S]+\bFROM\b',
+            r'\bINSERT\s+INTO\b',
+            r'\bCREATE\s+(TABLE|VIEW|PROCEDURE|INDEX)\b',
+            r'\bUPDATE\b[\s\S]+\bSET\b',
+            r'\bALTER\s+TABLE\b',
+            r'\bDELETE\s+FROM\b',
+            r'\b(GROUP|ORDER)\s+BY\b',
+            r'\bOVER\s*\([\s\S]*PARTITION\s+BY',
+            # Python / Scripting
+            r'\bdef\s+[a-zA-Z_]\w*\s*\(',
+            r'\bclass\s+[a-zA-Z_]\w*[:\(]',
+            r'\bimport\s+[a-zA-Z_]\w*',
+            r'\bfrom\s+[a-zA-Z_]\w*\s+import\b',
+            r'\breturn\b\s+[\w\d\(\{\[]',
+            r'\bfor\s+[a-zA-Z_]\w*\s+in\b',
+            r'\bwhile\b\s+[\s\S]+:',
+            r'\bif\b\s+[\s\S]+:\s*$',
+            # JS / TS / Java / C / Go / Rust
+            r'\b(const|let|var)\s+[a-zA-Z_]\w*\s*=',
+            r'\bfunction\s+[a-zA-Z_]\w*\s*\(',
+            r'\b(public|private|protected)\s+(static\s+)?[a-zA-Z_]',
+            r'#include\s+<[\w\.]+>',
+            r'\bpackage\s+[a-zA-Z_]',
+            r'\bfn\s+[a-zA-Z_]\w*\s*\(',
+        ]
+
+        for pat in code_patterns:
+            if re.search(pat, t, re.IGNORECASE):
+                return True
+
+        # Structural multi-line code indicators: (assignments, function calls, balanced braces with indentation)
+        structural_indicators = 0
+        has_assignments = bool(re.search(r'[a-zA-Z_]\w*\s*=\s*[^=]', t))
+        has_function_calls = bool(re.search(r'[a-zA-Z_]\w*\([^\)]*\)', t))
+        has_braces = ("{" in t and "}" in t) or ("[" in t and "]" in t)
+        has_indentation = any(l.startswith(("    ", "\t")) for l in t.splitlines())
+        has_semicolons = t.count(";") >= 2
+
+        if has_assignments: structural_indicators += 1
+        if has_function_calls: structural_indicators += 1
+        if has_braces: structural_indicators += 1
+        if has_indentation: structural_indicators += 1
+        if has_semicolons: structural_indicators += 1
+
+        return structural_indicators >= 3 and len(lines) >= 2
 
     @staticmethod
     def resolve_overlap_between_segments(prev_text: str, curr_text: str) -> str:

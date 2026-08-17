@@ -46,7 +46,7 @@ class OCRService:
         try:
             import modal
             print(f"⚡ Dispatching {len(image_urls)} keyframes to Modal Serverless GPU (NVIDIA T4)...")
-            f = modal.Function.lookup("vidnotes-gpu-worker", "process_keyframes_ocr_gpu")
+            f = modal.Function.from_name("vidnotes-gpu-worker", "process_keyframes_ocr_gpu")
             gpu_results = f.remote(image_urls)
             print(f"✅ Received {len(gpu_results)} GPU OCR outputs from Modal.")
             return gpu_results

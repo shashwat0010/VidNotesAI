@@ -606,11 +606,9 @@ Provide ONLY valid JSON. Start with '{{' and end with '}}'."""
                 block += f"![{time_label}]({url})\n\n"
             block += f"{key_concept}\n\n"
 
-            # Format code block cleanly if it has code-like characteristics (delimiters, assignments, or keywords)
-            if clean_code and len(clean_code) > 10 and not cleaner_service.is_gibberish_or_broken(clean_code):
-                has_code_syntax = any(c in clean_code for c in ["=", "(", ")", "{", "}", ";", "def ", "class ", "SELECT", "FROM"])
-                if has_code_syntax:
-                    block += f"```\n{clean_code}\n```\n\n"
+            # Only format as a code block if the text is 100% genuine, syntactically valid code
+            if cleaner_service.is_genuine_code(clean_code):
+                block += f"```\n{clean_code}\n```\n\n"
 
             return block
 
@@ -727,24 +725,12 @@ Output ONLY valid JSON starting with '{{' and ending with '}}'."""
                 code_body = (match.group(2) or "").strip()
                 
                 from app.services.cleaner import cleaner_service
-                # If code body has corrupted characters, unprintable noise, or is broken gibberish
-                if cleaner_service.is_gibberish_or_broken(code_body):
+                # If code body is not 100% genuine code or contains any corrupted OCR noise, purge it
+                if not cleaner_service.is_genuine_code(code_body):
                     return ""
                 
-                # Check for genuine code delimiters and programming syntax patterns
-                code_indicators = ["{", "}", "(", ")", ";", "=", "->", "=>", ":\n", "    ", "\t", "<", ">", "[", "]"]
-                has_code_structure = sum(1 for ind in code_indicators if ind in code_body) >= 2 or "\n" in code_body
-                
-                if has_code_structure and len(code_body) >= 10:
-                    tag = lang if lang else ""
-                    return f"```{tag}\n{code_body}\n```"
-                
-                # If it's just a short label or single line non-code fragment, drop the code block fence
-                if len(code_body) < 15 or len(code_body.split()) <= 3:
-                    return ""
-                
-                # If it has meaningful sentences, return as text without code block
-                return f"\n{code_body}\n"
+                tag = lang if lang else ""
+                return f"```{tag}\n{code_body}\n```"
 
             cleaned = re.sub(r'```([a-zA-Z0-9_-]*)\n([\s\S]*?)```', _filter_code_block, cleaned)
 

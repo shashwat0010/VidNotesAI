@@ -169,3 +169,43 @@ def test_deterministic_notes_sanitizer():
     assert "Review executive summary" not in sanitized["revision_notes"]
     assert "Core principles demonstrated in lecture" not in sanitized["takeaways"]
     assert "Glycolysis yields 2 net ATP" in sanitized["takeaways"]
+
+def test_genuine_code_validation_and_corrupt_code_purging():
+    """
+    Explicitly tests rejection of corrupt OCR code fragments (e.g. 'Ren44\n7solInier...')
+    and verifies that only 100% syntactically valid code blocks are preserved.
+    """
+    corrupt_ocr_1 = "Ren44\n7solInier\nwth Drahon (SCLie nln"
+    corrupt_ocr_2 = "EfaL\n7solInier\nwth Dahon (SCLie enen"
+    
+    assert cleaner_service.is_gibberish_or_broken(corrupt_ocr_1) is True
+    assert cleaner_service.is_gibberish_or_broken(corrupt_ocr_2) is True
+    assert cleaner_service.is_genuine_code(corrupt_ocr_1) is False
+    assert cleaner_service.is_genuine_code(corrupt_ocr_2) is False
+
+    valid_sql = "SELECT employee_id, salary FROM employees WHERE salary > 50000 ORDER BY salary DESC;"
+    valid_python = "def compute_loss(y_true, y_pred):\n    return np.mean((y_true - y_pred) ** 2)"
+    
+    assert cleaner_service.is_genuine_code(valid_sql) is True
+    assert cleaner_service.is_genuine_code(valid_python) is True
+
+    # Notes with corrupted code blocks must be completely stripped of the code blocks
+    draft_notes = {
+        "summary_exec": "Python data science lecture.",
+        "summary_detailed": (
+            "#### Slide at 10:30\n\n"
+            "```\nRen44\n7solInier\nwth Drahon (SCLie nln\n```\n\n"
+            "#### Slide at 11:30\n\n"
+            "```\nEfaL\n7solInier\nwth Dahon (SCLie enen\n```\n\n"
+            "#### Valid Code Slide\n\n"
+            "```python\ndef calculate_metrics(data):\n    return sum(data) / len(data)\n```\n"
+        )
+    }
+
+    sanitized = llm_service._deterministic_sanitize_notes_dict(draft_notes)
+    
+    assert "Ren44" not in sanitized["summary_detailed"]
+    assert "7solInier" not in sanitized["summary_detailed"]
+    assert "EfaL" not in sanitized["summary_detailed"]
+    assert "wth Drahon" not in sanitized["summary_detailed"]
+    assert "def calculate_metrics" in sanitized["summary_detailed"]

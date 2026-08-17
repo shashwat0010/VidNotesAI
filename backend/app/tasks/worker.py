@@ -192,17 +192,57 @@ def process_video_pipeline(self, video_id: str, user_id: int):
                 frames_dir = os.path.join(temp_dir, "frames")
                 raw_keyframes_list = video_service.extract_keyframes(local_video_path, frames_dir, interval_seconds=30)
                 raw_kf_count = len(raw_keyframes_list)
-                print(f"[Pipeline Stage 2] Processing all {raw_kf_count} keyframes (extracted every 30s)...")
+                print(f"[Pipeline Stage 2] Uploading and processing {raw_kf_count} keyframes (extracted every 30s)...")
 
-                def _process_single_frame(item):
+                def _upload_single_frame(item):
                     idx, (timestamp, local_frame_path) = item
                     filename = os.path.basename(local_frame_path)
                     s3_key = f"keyframes/{video_id}/{filename}"
                     s3_url = s3_service.upload_file(local_frame_path, s3_key, content_type="image/jpeg")
+                    return {
+                        "idx": idx,
+                        "timestamp": timestamp,
+                        "local_path": local_frame_path,
+                        "s3_url": s3_url
+                    }
 
-                    raw_ocr = ocr_service.extract_text(local_frame_path)
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    uploaded_frames = list(executor.map(_upload_single_frame, enumerate(raw_keyframes_list)))
+
+                # Run lightning-fast batch GPU OCR via Modal NVIDIA T4
+                s3_urls = [f["s3_url"] for f in uploaded_frames if f.get("s3_url")]
+                gpu_ocr_results = None
+                if s3_urls:
+                    try:
+                        gpu_ocr_results = ocr_service.extract_batch_gpu_modal(s3_urls)
+                    except Exception as modal_err:
+                        print(f"[Worker] Modal GPU OCR skipped ({modal_err}), falling back to local OCR.")
+
+                url_to_ocr = {}
+                if gpu_ocr_results:
+                    for item in gpu_ocr_results:
+                        if item.get("url") and item.get("ocr_text"):
+                            url_to_ocr[item["url"]] = item["ocr_text"]
+
+                results = []
+                for item in uploaded_frames:
+                    idx = item["idx"]
+                    timestamp = item["timestamp"]
+                    s3_url = item["s3_url"]
+                    local_frame_path = item["local_path"]
+
+                    # Use GPU OCR result if available, otherwise local OCR
+                    if s3_url in url_to_ocr:
+                        raw_ocr = url_to_ocr[s3_url]
+                    else:
+                        raw_ocr = ocr_service.extract_text(local_frame_path)
+
                     cleaned_ocr = cleaner_service.clean_ocr_text(raw_ocr)
-                    
+                    # If cleaned_ocr is broken or gibberish, omit it completely
+                    if cleaner_service.is_gibberish_or_broken(cleaned_ocr):
+                        cleaned_ocr = ""
+
                     mins = int(timestamp // 60)
                     secs = int(timestamp % 60)
                     
@@ -213,16 +253,12 @@ def process_video_pipeline(self, video_id: str, user_id: int):
                     else:
                         vision_desc = f"Visual presentation frame at {mins:02d}:{secs:02d}."
 
-                    return {
+                    results.append({
                         "timestamp": timestamp,
                         "s3_url": s3_url,
                         "ocr_text": cleaned_ocr,
                         "vision_description": vision_desc
-                    }
-
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=6) as executor:
-                    results = list(executor.map(_process_single_frame, enumerate(raw_keyframes_list)))
+                    })
 
                 for r in results:
                     db_kf = Keyframe(
