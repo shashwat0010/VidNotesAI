@@ -294,18 +294,26 @@ class PipelineCleaner:
     @classmethod
     def build_normalized_lecture_knowledge(
         cls,
-        clean_transcripts: List[Dict[str, Any]],
-        keyframes_data: List[Dict[str, Any]],
-        video_title: str = ""
+        clean_transcripts: List[Dict[str, Any]] = None,
+        keyframes_data: List[Dict[str, Any]] = None,
+        video_title: str = "",
+        transcript_segments: List[Dict[str, Any]] = None,
+        keyframes: List[Dict[str, Any]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Constructs a structured, normalized multimodal lecture knowledge base.
         Separates spoken transcript from visual slide code and structures them chronologically.
+        Accepts flexible parameter names (clean_transcripts/transcript_segments, keyframes_data/keyframes).
         """
+        resolved_transcripts = clean_transcripts if clean_transcripts is not None else (transcript_segments or [])
+        resolved_keyframes = keyframes_data if keyframes_data is not None else (keyframes or [])
+        resolved_title = video_title or kwargs.get("title", "")
+
         clean_visuals: List[Dict[str, Any]] = []
         seen_ocrs: List[str] = []
         
-        for idx, kf in enumerate(keyframes_data):
+        for idx, kf in enumerate(resolved_keyframes):
             ts = float(kf.get("timestamp", idx * 30.0))
             raw_ocr = kf.get("ocr_text") or ""
             cleaned_ocr = cls.clean_ocr_text(raw_ocr)
@@ -331,7 +339,7 @@ class PipelineCleaner:
         
         # Combine transcript and visual events into a chronological timeline
         events = []
-        for t in clean_transcripts:
+        for t in resolved_transcripts:
             events.append({
                 "time": t["start"],
                 "type": "speech",
@@ -369,8 +377,8 @@ class PipelineCleaner:
         compiled_text = "\n\n".join(timeline_blocks)
         
         return {
-            "title": video_title,
-            "transcript": clean_transcripts,
+            "title": resolved_title,
+            "transcript": resolved_transcripts,
             "visuals": clean_visuals,
             "timeline_text": compiled_text
         }

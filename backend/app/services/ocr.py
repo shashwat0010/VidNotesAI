@@ -8,9 +8,12 @@ class OCRService:
     def _load_reader(self):
         if self.reader is None:
             import easyocr
-            print("Initializing EasyOCR reader...")
-            self.reader = easyocr.Reader(['en'], gpu=False)
-            print("EasyOCR reader initialized.")
+            import torch
+            has_gpu = torch.cuda.is_available()
+            device_str = f"GPU ({torch.cuda.get_device_name(0)})" if has_gpu else "CPU"
+            print(f"Initializing EasyOCR reader on {device_str}...")
+            self.reader = easyocr.Reader(['en'], gpu=has_gpu)
+            print(f"EasyOCR reader initialized on {device_str}.")
 
     def extract_text(self, image_path: str) -> str:
         """
