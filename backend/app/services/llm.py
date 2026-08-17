@@ -578,42 +578,39 @@ Provide ONLY valid JSON. Start with '{{' and end with '}}'."""
             time_label = f"Slide at {mins:02d}:{secs:02d}"
             url = kf.get('s3_url', '')
             ocr = (kf.get('ocr_text') or '').strip()
+            v_desc = (kf.get('vision_description') or '').strip()
             
             # Clean OCR
             from app.services.cleaner import cleaner_service
             clean_code = cleaner_service.clean_ocr_text(ocr)
 
-            # Generate high-yield topic title & key concept
+            # Generate high-yield topic title & key concept generically
             topic_title = time_label
-            key_concept = ""
-            if "ROW_NUMBER" in clean_code.upper() or "RANK" in clean_code.upper() or "DENSE_RANK" in clean_code.upper():
-                topic_title = f"{time_label}: SQL Window Functions (ROW_NUMBER & RANK)"
-                key_concept = "Demonstrates SQL ranking window functions (`ROW_NUMBER()`, `RANK()`, and `DENSE_RANK()`) evaluated across ordered dataset partitions."
-            elif "SELECT" in clean_code.upper() or "FROM" in clean_code.upper():
-                topic_title = f"{time_label}: SQL Query Execution & Data Selection"
-                key_concept = "Executes structured query operations to filter, aggregate, and project dataset columns."
-            elif len(clean_code) > 15:
-                words = [w for w in clean_code.split() if w.isalnum() and len(w) > 3][:6]
+            if v_desc and len(v_desc) > 10:
+                # Use clean summary phrase from vision description if available
+                v_words = [w for w in v_desc.replace("Visual slide illustrating:", "").split() if w.isalnum()][:6]
+                if v_words:
+                    topic_title = f"{time_label}: {' '.join(v_words).title()}"
+                key_concept = v_desc
+            elif clean_code and len(clean_code) > 15:
+                first_line = clean_code.splitlines()[0].strip()
+                words = [w for w in first_line.split() if w.isalnum()][:5]
                 if words:
                     topic_title = f"{time_label}: {' '.join(words).title()}"
-                key_concept = f"Visual reference illustrating core topics and technical terms discussed at ({mins:02d}:{secs:02d})."
+                key_concept = f"Visual reference demonstrating core principles discussed at ({mins:02d}:{secs:02d})."
             else:
-                key_concept = f"Keyframe visual reference for the lecture segment at ({mins:02d}:{secs:02d})."
+                key_concept = f"Keyframe presentation visual reference for the lecture segment at ({mins:02d}:{secs:02d})."
 
             block = f"#### {topic_title}\n"
             if url:
                 block += f"![{time_label}]({url})\n\n"
             block += f"{key_concept}\n\n"
 
-            # Format code block cleanly if SQL or code keywords are found
-            if any(kw in clean_code.upper() for kw in ["SELECT", "ROW_NUMBER", "RANK", "DENSE_RANK", "OVER", "ORDER BY", "DEF ", "CLASS ", "IMPORT "]):
-                formatted_code = clean_code
-                formatted_code = re.sub(r'\bSELECT\b', '\nSELECT\n  ', formatted_code, flags=re.IGNORECASE)
-                formatted_code = re.sub(r'\bFROM\b', '\nFROM ', formatted_code, flags=re.IGNORECASE)
-                formatted_code = re.sub(r'\bWHERE\b', '\nWHERE ', formatted_code, flags=re.IGNORECASE)
-                formatted_code = re.sub(r'\bOVER\s*\(', 'OVER (', formatted_code, flags=re.IGNORECASE)
-                formatted_code = formatted_code.strip()
-                block += f"```sql\n{formatted_code}\n```\n\n"
+            # Format code block cleanly if it has code-like characteristics (delimiters, assignments, or keywords)
+            if clean_code and len(clean_code) > 10 and not cleaner_service.is_gibberish_or_broken(clean_code):
+                has_code_syntax = any(c in clean_code for c in ["=", "(", ")", "{", "}", ";", "def ", "class ", "SELECT", "FROM"])
+                if has_code_syntax:
+                    block += f"```\n{clean_code}\n```\n\n"
 
             return block
 
@@ -626,7 +623,149 @@ Provide ONLY valid JSON. Start with '{{' and end with '}}'."""
                     slide_section += _format_clean_slide_block(kf, idx)
                 result['summary_detailed'] += slide_section
 
-        return result
+        # Final LLM Quality & Sanitization Pass: purge all OCR noise, fix code blocks, and polish notes
+        refined_result = self.refine_and_sanitize_notes_package(result, raw_lecture_knowledge=consolidated_knowledge)
+        return refined_result
+
+    def refine_and_sanitize_notes_package(self, notes_dict: Dict[str, Any], raw_lecture_knowledge: str = "") -> Dict[str, Any]:
+        """
+        Final LLM refinement, proofreading, and sanitization pass:
+        1. Completely purges any and all OCR noise and gibberish (e.g. '~VERLOAD', '661. | UVEr LOAD', '14Jf4 dor ttee', 'DoPAMINE CvERLoAD IE DorAnln').
+        2. Sanitizes code blocks: removes non-code/garbled text from code fences, fixes language tags, only keeps valid syntax.
+        3. Removes generic boilerplate placeholders (e.g. 'Review executive summary', 'Core principles demonstrated in lecture') and replaces them with concrete, video-specific technical takeaways.
+        4. Removes internal debugging labels like 'Code / Slide Content:' or 'Visual Breakdown:'.
+        5. Preserves all valid markdown structures and inline slide images: ![Slide at MM:SS](url).
+        """
+        system_prompt = (
+            "You are the Lead Academic Editor & AI Quality Assurance Auditor. "
+            "Your task is to thoroughly clean, sanitize, fix, and polish the provided draft lecture notes package before publication. "
+            "STRICT QUALITY MANDATES:\n"
+            "1. PURGE ALL OCR NOISE & GIBBERISH: Detect and remove all garbled characters, broken OCR fragments, and noisy artifacts (e.g. '~VERLOAD', '661. | UVEr LOAD', '14Jf4 dor ttee', 'DoPAMINE CvERLoAD IE DorAnln').\n"
+            "2. REMOVE BOGUS CODE BLOCKS: Never wrap non-code, broken OCR fragments, or random English words in ```sql or other code blocks. If a code block is not real, valid executable code/queries, reformat it as standard text or remove it.\n"
+            "3. ELIMINATE GENERIC BOILERPLATE: Remove placeholder phrases like 'Review executive summary', 'Review visual slides', 'Core principles demonstrated in lecture', 'Key implementation patterns'. Replace them with concrete, deep, technical takeaways and actionable checklists directly from the lecture.\n"
+            "4. REMOVE DEBUG LABELS: Strip labels like 'Code / Slide Content:', 'Visual Breakdown:', 'Slide Notes:'.\n"
+            "5. PRESERVE INLINE SLIDE IMAGES: Keep all valid markdown images ![Slide at MM:SS](url) intact.\n"
+            "6. Output ONLY a valid JSON object matching the input structure."
+        )
+
+        prompt = f"""Review and sanitize the following drafted lecture notes:
+---
+{json.dumps(notes_dict, indent=2)}
+---
+Context Reference:
+{raw_lecture_knowledge[:4000]}
+
+Clean, proofread, and return the 5 polished fields as a SINGLE valid JSON object:
+{{
+  "summary_exec": "Polished executive overview (2-3 paragraphs)",
+  "summary_detailed": "Pristine detailed notes with markdown headers, explanations, inline slide images, and valid code snippets ONLY",
+  "revision_notes": "Concrete, video-specific revision checklist and key principles",
+  "takeaways": "5-8 deep, specific technical/conceptual takeaways",
+  "glossary": "Clear definition list of actual terms from the lecture"
+}}
+Output ONLY valid JSON starting with '{{' and ending with '}}'."""
+
+        try:
+            raw = self._call_openrouter_with_fallback(
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                max_tokens=3500, temperature=0.2, json_mode=True
+            )
+            if not raw and settings.MISTRAL_API_KEY and self.mistral_client:
+                response = self.mistral_client.chat.complete(
+                    model=settings.MISTRAL_MODEL,
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"} if hasattr(settings, "MISTRAL_MODEL") else None,
+                    max_tokens=3500,
+                    temperature=0.2
+                )
+                raw = response.choices[0].message.content
+            elif not raw and settings.OPENAI_API_KEY:
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    max_tokens=3500,
+                    temperature=0.2
+                )
+                raw = response.choices[0].message.content
+            elif not raw and settings.GEMINI_API_KEY:
+                response = self.gemini_client.models.generate_content(
+                    model=settings.GEMINI_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", system_instruction=system_prompt, temperature=0.2)
+                )
+                raw = response.text
+
+            if raw:
+                parsed = _extract_json(raw)
+                if isinstance(parsed, dict) and parsed.get("summary_detailed"):
+                    return self._deterministic_sanitize_notes_dict(parsed)
+        except Exception as e:
+            print(f"[Notes Sanitizer Exception]: {e}")
+
+        # Safety deterministic fallback
+        return self._deterministic_sanitize_notes_dict(notes_dict)
+
+    def _deterministic_sanitize_notes_dict(self, notes_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Guaranteed deterministic safety filter: purges OCR noise, broken code blocks, and debugging labels.
+        """
+        def _clean_field(text: str) -> str:
+            if not text or not isinstance(text, str):
+                return text or ""
+            
+            cleaned = text
+            
+            # 1. Remove debugging labels like 'Code / Slide Content:' or '**Code / Slide Content:**'
+            cleaned = re.sub(r'(?:\*{1,2})?Code\s*/\s*Slide\s*Content:?(?:\*{1,2})?', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'(?:\*{1,2})?Visual\s*Breakdown:?(?:\*{1,2})?', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'(?:\*{1,2})?Slide\s*Notes:?(?:\*{1,2})?', '', cleaned, flags=re.IGNORECASE)
+
+            # 2. Find and clean all code blocks ```[lang] ... ```
+            def _filter_code_block(match):
+                lang = (match.group(1) or "").strip().lower()
+                code_body = (match.group(2) or "").strip()
+                
+                from app.services.cleaner import cleaner_service
+                # If code body has corrupted characters, unprintable noise, or is broken gibberish
+                if cleaner_service.is_gibberish_or_broken(code_body):
+                    return ""
+                
+                # Check for genuine code delimiters and programming syntax patterns
+                code_indicators = ["{", "}", "(", ")", ";", "=", "->", "=>", ":\n", "    ", "\t", "<", ">", "[", "]"]
+                has_code_structure = sum(1 for ind in code_indicators if ind in code_body) >= 2 or "\n" in code_body
+                
+                if has_code_structure and len(code_body) >= 10:
+                    tag = lang if lang else ""
+                    return f"```{tag}\n{code_body}\n```"
+                
+                # If it's just a short label or single line non-code fragment, drop the code block fence
+                if len(code_body) < 15 or len(code_body.split()) <= 3:
+                    return ""
+                
+                # If it has meaningful sentences, return as text without code block
+                return f"\n{code_body}\n"
+
+            cleaned = re.sub(r'```([a-zA-Z0-9_-]*)\n([\s\S]*?)```', _filter_code_block, cleaned)
+
+            # 3. Clean up generic boilerplate checklist/takeaway items
+            cleaned = re.sub(r'^\s*[-*•]\s*\[\s*\]\s*Review executive summary\.?\s*$', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+            cleaned = re.sub(r'^\s*[-*•]\s*\[\s*\]\s*Review visual slides.*$', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+            cleaned = re.sub(r'^\s*\d+\.\s*Core principles demonstrated in lecture\.?\s*$', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+            cleaned = re.sub(r'^\s*\d+\.\s*Key implementation patterns\.?\s*$', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+            cleaned = re.sub(r'^\s*\d+\.\s*Common edge cases and optimizations\.?\s*$', '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
+
+            # 4. Normalize multiple blank lines
+            cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+            return cleaned
+
+        return {
+            "summary_exec": _clean_field(notes_dict.get("summary_exec", "")),
+            "summary_detailed": _clean_field(notes_dict.get("summary_detailed", "")),
+            "revision_notes": _clean_field(notes_dict.get("revision_notes", "")),
+            "takeaways": _clean_field(notes_dict.get("takeaways", "")),
+            "glossary": _clean_field(notes_dict.get("glossary", "")),
+        }
 
     def _generate_heuristic_notes_fallback(self, consolidated_knowledge: str, keyframes: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -664,11 +803,8 @@ Provide ONLY valid JSON. Start with '{{' and end with '}}'."""
                 if url:
                     detailed_sections.append(f"![{time_label}]({url})\n")
                 
-                if "ROW_NUMBER" in ocr.upper() or "RANK" in ocr.upper():
-                    detailed_sections.append("Demonstrates SQL window ranking functions (`ROW_NUMBER()`, `RANK()`, `DENSE_RANK()`) evaluated across partitions.\n")
-                    detailed_sections.append(f"```sql\n{ocr}\n```\n")
-                elif ocr and len(ocr) > 15:
-                    detailed_sections.append(f"Key reference material and code architecture illustrated in this segment.\n")
+                if ocr and len(ocr) > 15:
+                    detailed_sections.append(f"Key presentation reference and demonstrated principles illustrated in this segment.\n")
                     detailed_sections.append(f"```\n{ocr[:300]}\n```\n")
                 else:
                     detailed_sections.append(f"Core theoretical principles and demonstration at ({mins:02d}:{secs:02d}).\n")
@@ -1223,32 +1359,6 @@ Ensure the response is a strict valid JSON object."""
                     "end_time": e_time
                 })
 
-            # Check if lecture is about SQL Window Functions
-            if "ROW_NUMBER" in full_context_text or "RANK" in full_context_text or "DENSE_RANK" in full_context_text:
-                if any(w in q_upper for w in ["WHAT", "DISCUSS", "FUNCTION", "SUMMARY", "OVERVIEW", "DIFFERENCE", "EXPLAIN", "TEACH"]):
-                    answer_text = (
-                        "### SQL Window Ranking Functions Discussed:\n\n"
-                        "This lecture provides a comprehensive comparison of the three primary SQL window ranking functions using practical employee dataset queries:\n\n"
-                        "* **1. `ROW_NUMBER()`** [0]\n"
-                        "  Assigns a unique, consecutive integer (1, 2, 3...) to each row in the partition, regardless of duplicate or tied values.\n\n"
-                        "* **2. `RANK()`** [1]\n"
-                        "  Assigns identical rank numbers to tied values, but **skips subsequent rankings** by the number of duplicates (e.g., `1, 2, 2, 4`).\n\n"
-                        "* **3. `DENSE_RANK()`** [2]\n"
-                        "  Assigns identical rank numbers to tied values **without skipping any subsequent ranks** (e.g., `1, 2, 2, 3`).\n\n"
-                        "* **4. Key Takeaway on Ties & Duplicates** [3]\n"
-                        "  When all rows have distinct values, all three functions produce identical results. The critical difference only appears when duplicate values exist in the ordered column.\n\n"
-                        "```sql\n"
-                        "SELECT \n"
-                        "  employee_name, \n"
-                        "  hire_date,\n"
-                        "  ROW_NUMBER() OVER (ORDER BY hire_date) AS row_num,\n"
-                        "  RANK() OVER (ORDER BY hire_date) AS rnk,\n"
-                        "  DENSE_RANK() OVER (ORDER BY hire_date) AS dense_rnk\n"
-                        "FROM employees;\n"
-                        "```\n\n"
-                        "*Click any citation badge `[0]`, `[1]`, `[2]` to jump to that explanation in the video.*"
-                    )
-                    return {"answer": answer_text, "citations": citations}
 
             # General articulate concept synthesis from retrieved passages
             def _extract_clean_sentences(text: str) -> List[str]:

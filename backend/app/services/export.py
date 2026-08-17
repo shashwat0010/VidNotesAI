@@ -14,26 +14,35 @@ from app.models.models import NoteOutput
 class ExportService:
     @staticmethod
     def generate_markdown(note: NoteOutput, title: str, keyframes: list = None) -> str:
+        from app.services.llm import llm_service
+        sanitized = llm_service._deterministic_sanitize_notes_dict({
+            "summary_exec": note.summary_exec or "",
+            "summary_detailed": note.summary_detailed or "",
+            "revision_notes": note.revision_notes or "",
+            "takeaways": note.takeaways or "",
+            "glossary": note.glossary or ""
+        })
+
         md = []
         md.append(f"# {title} - Study Notes")
         md.append("\n## Executive Summary\n")
-        md.append(note.summary_exec or "")
+        md.append(sanitized["summary_exec"])
         
         md.append("\n## Detailed Lecture Notes\n")
-        md.append(note.summary_detailed or "")
+        md.append(sanitized["summary_detailed"])
         
         md.append("\n## Revision & Review Checklist\n")
-        md.append(note.revision_notes or "")
+        md.append(sanitized["revision_notes"])
         
         md.append("\n## Key Takeaways\n")
-        md.append(note.takeaways or "")
+        md.append(sanitized["takeaways"])
         
         md.append("\n## Glossary of Terms\n")
-        md.append(note.glossary or "")
+        md.append(sanitized["glossary"])
         
         # Check if keyframes need to be appended
         if keyframes:
-            detailed_txt = note.summary_detailed or ""
+            detailed_txt = sanitized["summary_detailed"]
             missing_kfs = [
                 kf for kf in keyframes
                 if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
@@ -48,9 +57,6 @@ class ExportService:
                     secs = int(ts % 60)
                     md.append(f"### Slide at {mins:02d}:{secs:02d}")
                     md.append(f"![Slide at {mins:02d}:{secs:02d}]({url})\n")
-                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
-                    if ocr:
-                        md.append(f"**Slide Text:** {ocr}\n")
 
         if note.flashcards:
             md.append("\n## Flashcards\n")
@@ -203,29 +209,38 @@ class ExportService:
                 else:
                     doc.add_paragraph(l_str)
 
+        from app.services.llm import llm_service
+        sanitized = llm_service._deterministic_sanitize_notes_dict({
+            "summary_exec": note.summary_exec or "",
+            "summary_detailed": note.summary_detailed or "",
+            "revision_notes": note.revision_notes or "",
+            "takeaways": note.takeaways or "",
+            "glossary": note.glossary or ""
+        })
+
         # Executive Summary
         doc.add_heading("Executive Summary", level=1)
-        _parse_md_docx(note.summary_exec)
+        _parse_md_docx(sanitized["summary_exec"])
 
         # Detailed summary
         doc.add_heading("Detailed Lecture Notes", level=1)
-        _parse_md_docx(note.summary_detailed)
+        _parse_md_docx(sanitized["summary_detailed"])
 
         # Revision Guide
         doc.add_heading("Revision Guide", level=1)
-        _parse_md_docx(note.revision_notes)
+        _parse_md_docx(sanitized["revision_notes"])
 
         # Takeaways
         doc.add_heading("Key Takeaways", level=1)
-        _parse_md_docx(note.takeaways)
+        _parse_md_docx(sanitized["takeaways"])
 
         # Glossary
         doc.add_heading("Glossary of Terms", level=1)
-        _parse_md_docx(note.glossary)
+        _parse_md_docx(sanitized["glossary"])
 
         # Append keyframes if not already inside detailed notes
         if keyframes:
-            detailed_txt = note.summary_detailed or ""
+            detailed_txt = sanitized["summary_detailed"]
             missing_kfs = [
                 kf for kf in keyframes
                 if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
@@ -245,9 +260,6 @@ class ExportService:
                             doc.add_picture(stream, width=Inches(4.5))
                         except Exception as e:
                             print(f"[DOCX] Slide picture add notice: {e}")
-                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
-                    if ocr:
-                        doc.add_paragraph(f"Slide Text: {ocr}")
 
         # Flashcards
         if note.flashcards:
@@ -513,30 +525,39 @@ class ExportService:
             fontName='Helvetica-Oblique', fontSize=11, textColor=colors.HexColor('#6b7280'), spaceAfter=20)))
         story.append(Spacer(1, 12))
 
+        from app.services.llm import llm_service
+        sanitized = llm_service._deterministic_sanitize_notes_dict({
+            "summary_exec": note.summary_exec or "",
+            "summary_detailed": note.summary_detailed or "",
+            "revision_notes": note.revision_notes or "",
+            "takeaways": note.takeaways or "",
+            "glossary": note.glossary or ""
+        })
+
         # Sections
         story.append(Paragraph("Executive Summary", h1_style))
-        _parse_markdown(note.summary_exec, story)
+        _parse_markdown(sanitized["summary_exec"], story)
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Detailed Lecture Notes", h1_style))
-        _parse_markdown(note.summary_detailed, story)
+        _parse_markdown(sanitized["summary_detailed"], story)
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Revision Guide", h1_style))
-        _parse_markdown(note.revision_notes, story)
+        _parse_markdown(sanitized["revision_notes"], story)
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Key Takeaways", h1_style))
-        _parse_markdown(note.takeaways, story)
+        _parse_markdown(sanitized["takeaways"], story)
         story.append(Spacer(1, 10))
 
         story.append(Paragraph("Glossary of Terms", h1_style))
-        _parse_markdown(note.glossary, story)
+        _parse_markdown(sanitized["glossary"], story)
         story.append(Spacer(1, 10))
 
         # Keyframes slides
         if keyframes:
-            detailed_txt = note.summary_detailed or ""
+            detailed_txt = sanitized["summary_detailed"]
             missing_kfs = [
                 kf for kf in keyframes
                 if (kf.s3_url if hasattr(kf, 's3_url') else kf.get('s3_url'))
@@ -555,10 +576,6 @@ class ExportService:
                         story.append(Spacer(1, 4))
                         story.append(img)
                         story.append(Spacer(1, 4))
-                    ocr = kf.ocr_text if hasattr(kf, 'ocr_text') else kf.get('ocr_text')
-                    if ocr:
-                        story.append(Paragraph(f"<b>Slide Text:</b> {_inline_md(ocr)}", body_style))
-                    story.append(Spacer(1, 8))
 
         # Flashcards
         if note.flashcards:

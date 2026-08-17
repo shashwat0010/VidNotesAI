@@ -1,48 +1,54 @@
 import re
 import os
+import math
 from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 
 class PipelineCleaner:
     """
-    Core Normalization, Deduplication, and Multimodal Cleaning Engine for VidNotes AI.
-    Handles transcript overlap removal, stutter/filler suppression, gibberish filtering,
-    keyframe visual similarity deduplication, slide OCR normalization, and structured knowledge consolidation.
+    Core Content-Independent Normalization, Deduplication, and Multimodal Quality Engine for VidNotes AI.
+    Works for any YouTube video and any subject without hardcoded keywords, topics, or static replacements.
     """
 
-    # Common speech disfluencies and ASR subtitle noise
+    # Generic speech disfluencies and subtitle artifact patterns (content-agnostic)
     FILLER_WORDS_PATTERN = re.compile(
-        r'\b(?:uh+|um+|umm+|uhh+|er+|ah+|you\s+know|like\s+I\s+say|sort\s+of|kind\s+of)\b',
+        r'\b(?:uh+|um+|umm+|uhh+|er+|ah+|eh+)\b',
         re.IGNORECASE
     )
     
     SUBTITLE_ARTIFACTS_PATTERN = re.compile(
-        r'\[(?:Music|Applause|Laughter|Silence|Foreign|Cheering|Audio)\]|<[^>]+>|\{[^}]+\}',
+        r'\[[A-Za-z0-9\s_-]+\]|<[^>]+>|\{[^}]+\}',
         re.IGNORECASE
     )
 
     @staticmethod
     def clean_text_fragment(text: str) -> str:
-        """Cleans a single text fragment: removes subtitle tags, stuttered words, and fillers."""
-        if not text:
+        """
+        Cleans a single text fragment using content-independent structural rules:
+        removes subtitle markers, vocal disfluencies, stutter loops, and whitespace anomalies.
+        """
+        if not text or not isinstance(text, str):
             return ""
         
-        # 1. Remove subtitle noise tags like [Music], <c>, etc.
+        # 1. Remove bracketed subtitle noise tags like [Music], [Applause], <c>, etc.
         cleaned = PipelineCleaner.SUBTITLE_ARTIFACTS_PATTERN.sub(" ", text)
         
-        # 2. Remove filler words (uh, um, you know)
+        # 2. Remove universal phoneme filler disfluencies (uh, um, er, ah)
         cleaned = PipelineCleaner.FILLER_WORDS_PATTERN.sub(" ", cleaned)
         
-        # 3. Remove consecutive word stutter repetitions (e.g., "the the the" -> "the", "I I will" -> "I will")
+        # 3. Remove consecutive word stutter repetitions (e.g. "the the the" -> "the")
         cleaned = re.sub(r'\b(\w+)(?:\s+\1\b)+', r'\1', cleaned, flags=re.IGNORECASE)
         
-        # 4. Remove consecutive 2-word phrase stutter repetitions (e.g., "for this for this" -> "for this")
+        # 4. Remove consecutive 2-word phrase stutter repetitions (e.g. "to do to do" -> "to do")
         cleaned = re.sub(r'\b(\w+\s+\w+)(?:\s+\1\b)+', r'\1', cleaned, flags=re.IGNORECASE)
         
         # 5. Remove consecutive 3-word phrase stutter repetitions
         cleaned = re.sub(r'\b(\w+\s+\w+\s+\w+)(?:\s+\1\b)+', r'\1', cleaned, flags=re.IGNORECASE)
         
-        # 6. Normalize whitespace
+        # 6. Remove consecutive 4-word phrase stutter repetitions
+        cleaned = re.sub(r'\b(\w+\s+\w+\s+\w+\s+\w+)(?:\s+\1\b)+', r'\1', cleaned, flags=re.IGNORECASE)
+
+        # 7. Normalize whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         
         return cleaned
@@ -50,48 +56,67 @@ class PipelineCleaner:
     @staticmethod
     def is_gibberish_or_broken(text: str) -> bool:
         """
-        Detects broken, nonsensical, or corrupt text fragments.
-        Returns True if the text should be discarded.
+        Generic content-independent classifier for corrupted, nonsensical, or fragmented text.
+        Evaluates character entropy, noise ratios, lexical repetition, and malformed sequences.
         """
-        if not text or len(text.strip()) == 0:
+        if not text or not isinstance(text, str):
             return True
         
         t = text.strip()
+        if len(t) == 0:
+            return True
+        
+        # If no alphanumeric characters exist at all (e.g. "...", "---", "~!@#")
+        if not any(c.isalnum() for c in t):
+            return True
+
+        # Fragment with fewer than 2 alphanumeric characters
+        alpha_count = sum(1 for c in t if c.isalnum())
+        if alpha_count < 2:
+            return True
+        
+        # Extreme repetition of single character (e.g. "......", "aaaaaaa", "------")
+        if re.search(r'(.)\1{4,}', t):
+            return True
+            
+        # Non-alphanumeric noise ratio check (allowing standard punctuation and code symbols)
+        allowed_chars = set("=+-*/<>():;{}[]_.,!?'\"%#$@&|\\~`^")
+        non_printable_count = sum(1 for c in t if not c.isalnum() and c not in allowed_chars and not c.isspace())
+        if len(t) > 0 and (non_printable_count / len(t)) > 0.25:
+            return True
+            
+        # High unprintable / corrupt symbol ratio (e.g. "~`|^\\_")
+        symbol_count = sum(1 for c in t if c in "~`|^\\_")
+        if len(t) > 0 and (symbol_count / len(t)) > 0.08:
+            return True
+
         words = t.split()
-        
-        # Fragment with fewer than 2 characters and no alphanumeric value
-        if len(t) < 2 and not t.isalnum():
-            return True
-        
-        # Extreme repetition of single character (e.g., "......", "aaaaaaa")
-        if re.search(r'(.)\1{5,}', t):
-            return True
-            
-        # Non-alphanumeric/non-ascii noise ratio check (excluding code symbols)
-        allowed_code_chars = set("=+-*/<>():;{}[]_.,!?'\"%#$@&|\\~`")
-        non_printable_count = sum(1 for c in t if not c.isalnum() and c not in allowed_code_chars and not c.isspace())
-        if len(t) > 0 and (non_printable_count / len(t)) > 0.35:
-            return True
-            
-        # Unusually high repetitive word ratio in a single segment (e.g. ASR loop: "row row row row row")
         if len(words) >= 4:
             unique_words = set(w.lower() for w in words)
-            if (len(unique_words) / len(words)) < 0.30:
+            if (len(unique_words) / len(words)) < 0.35:
                 return True
                 
+        # Consonant cluster anomaly: words with 6+ consonants and no vowels (excluding digit strings)
+        vowels = set("aeiouyAEIOUY")
+        for w in words:
+            if w.isalpha() and len(w) >= 6:
+                vowel_count = sum(1 for char in w if char in vowels)
+                if vowel_count == 0:
+                    return True
+            # Mixed irregular digit-letter token noise (e.g. "14Jf4", "3x9kPZ")
+            if re.search(r'^\d+[A-Za-z]+\d+[A-Za-z]*$', w) or re.search(r'^[A-Za-z]+\d+[A-Za-z]+\d+', w):
+                return True
+
         return False
 
     @staticmethod
     def resolve_overlap_between_segments(prev_text: str, curr_text: str) -> str:
         """
         Detects and removes overlapping word sequences between consecutive speech cues.
-        Example:
-          prev: "based on hire date"
-          curr: "based on hire date and row number"
-          -> returns "and row number"
+        Operates generically across any language/vocabulary without hardcoded tokens.
         """
         if not prev_text or not curr_text:
-            return curr_text
+            return curr_text or ""
             
         prev_words = prev_text.split()
         curr_words = curr_text.split()
@@ -148,134 +173,105 @@ class PipelineCleaner:
                 continue
                 
             # Step B: Boundary overlap resolution with previous segment
-            overlap_resolved_text = cls.resolve_overlap_between_segments(prev_cleaned_text, cleaned_text)
-            
-            if not overlap_resolved_text or cls.is_gibberish_or_broken(overlap_resolved_text):
+            resolved_text = cls.resolve_overlap_between_segments(prev_cleaned_text, cleaned_text)
+            if not resolved_text or cls.is_gibberish_or_broken(resolved_text):
+                continue
+                
+            # Step C: Exact duplicate suppression
+            if prev_cleaned_text and resolved_text.lower() == prev_cleaned_text.lower():
                 continue
                 
             cleaned_stream.append({
-                "text": overlap_resolved_text,
-                "start": max(0.0, start_t),
-                "end": max(start_t + 0.5, end_t)
+                "start": start_t,
+                "end": max(end_t, start_t + 1.0),
+                "text": resolved_text
             })
-            prev_cleaned_text = cleaned_text
+            prev_cleaned_text = resolved_text
 
-        # Step C: Group into coherent, readable thought units (15s - 30s)
-        final_segments: List[Dict[str, Any]] = []
-        current_chunk_words: List[str] = []
-        chunk_start = None
-        chunk_end = 0.0
-        
+        # Step D: Chronological chunking into unified conceptual windows (e.g. 20-30s blocks)
+        if not cleaned_stream:
+            return []
+
+        consolidated_chunks: List[Dict[str, Any]] = []
+        curr_chunk_texts: List[str] = []
+        curr_chunk_start: float = cleaned_stream[0]["start"]
+        curr_chunk_end: float = cleaned_stream[0]["end"]
+
         for item in cleaned_stream:
-            if chunk_start is None:
-                chunk_start = item["start"]
+            # If current block duration exceeds target window and has full sentence end, seal chunk
+            duration = item["end"] - curr_chunk_start
+            text_str = item["text"]
             
-            # Clean repeated words within current chunk
-            words = item["text"].split()
-            current_chunk_words.extend(words)
-            chunk_end = max(chunk_end, item["end"])
-            
-            duration = chunk_end - chunk_start
-            sentence_ends = item["text"].rstrip().endswith((".", "!", "?", ";"))
-            
-            if (duration >= target_chunk_duration and sentence_ends) or duration >= (target_chunk_duration * 1.5):
-                chunk_str = cls.clean_text_fragment(" ".join(current_chunk_words))
-                if chunk_str and not cls.is_gibberish_or_broken(chunk_str):
-                    final_segments.append({
-                        "text": chunk_str,
-                        "start": round(chunk_start, 2),
-                        "end": round(chunk_end, 2)
+            if duration >= target_chunk_duration and (curr_chunk_texts and curr_chunk_texts[-1].endswith(('.', '!', '?'))):
+                merged_body = " ".join(curr_chunk_texts)
+                # Final pass on merged body to remove any residual intra-chunk stutter
+                merged_body = cls.clean_text_fragment(merged_body)
+                if merged_body:
+                    consolidated_chunks.append({
+                        "start": round(curr_chunk_start, 2),
+                        "end": round(curr_chunk_end, 2),
+                        "text": merged_body
                     })
-                current_chunk_words = []
-                chunk_start = None
+                curr_chunk_texts = [text_str]
+                curr_chunk_start = item["start"]
+                curr_chunk_end = item["end"]
+            else:
+                curr_chunk_texts.append(text_str)
+                curr_chunk_end = max(curr_chunk_end, item["end"])
 
-        if current_chunk_words and chunk_start is not None:
-            chunk_str = cls.clean_text_fragment(" ".join(current_chunk_words))
-            if chunk_str and not cls.is_gibberish_or_broken(chunk_str):
-                final_segments.append({
-                    "text": chunk_str,
-                    "start": round(chunk_start, 2),
-                    "end": round(max(chunk_end, chunk_start + 1.0), 2)
+        if curr_chunk_texts:
+            merged_body = cls.clean_text_fragment(" ".join(curr_chunk_texts))
+            if merged_body:
+                consolidated_chunks.append({
+                    "start": round(curr_chunk_start, 2),
+                    "end": round(curr_chunk_end, 2),
+                    "text": merged_body
                 })
 
-        return final_segments
-
-    @staticmethod
-    def deduplicate_keyframes(keyframes_list: List[Tuple[float, str]], similarity_threshold: float = 0.94) -> List[Tuple[float, str]]:
-        """
-        Removes near-identical sequential video frames using image histogram comparison.
-        Prevents processing the same static slide 10 times if it stayed on screen for minutes.
-        """
-        if not keyframes_list or len(keyframes_list) <= 1:
-            return keyframes_list
-            
-        unique_keyframes: List[Tuple[float, str]] = []
-        prev_img_array = None
-        
-        try:
-            from PIL import Image
-            for timestamp, file_path in keyframes_list:
-                if not os.path.exists(file_path):
-                    continue
-                try:
-                    with Image.open(file_path) as img:
-                        # Convert to small grayscale for fast perceptual similarity check
-                        small_gray = img.convert("L").resize((64, 64))
-                        arr = np.array(small_gray, dtype=np.float32)
-                        
-                        if prev_img_array is None:
-                            unique_keyframes.append((timestamp, file_path))
-                            prev_img_array = arr
-                        else:
-                            # Mean Absolute Error (MAE) normalized
-                            diff = np.mean(np.abs(arr - prev_img_array)) / 255.0
-                            similarity = 1.0 - diff
-                            
-                            if similarity < similarity_threshold:
-                                unique_keyframes.append((timestamp, file_path))
-                                prev_img_array = arr
-                except Exception as e:
-                    # If single frame fails to read, keep it safely
-                    unique_keyframes.append((timestamp, file_path))
-        except ImportError:
-            # Fallback if PIL not available
-            return keyframes_list
-            
-        return unique_keyframes
+        return consolidated_chunks
 
     @staticmethod
     def clean_ocr_text(ocr_text: str) -> str:
         """
-        Normalizes OCR extracted text: removes line numbers, editor artifacts,
-        and fixes common OCR typos while preserving code and SQL query syntax.
+        Generic, content-agnostic OCR cleaner:
+        1. Strips editor line numbers (e.g. '1 ', '10:', '294 ') at the beginning of code/text lines.
+        2. Strips non-printable ASCII noise and stray isolated symbols.
+        3. Filters corrupt/gibberish lines using generic entropy checks.
+        4. Preserves authentic code, symbols, indentations, and formulas without hardcoding vocabulary.
         """
-        if not ocr_text:
+        if not ocr_text or not isinstance(ocr_text, str):
             return ""
             
         cleaned = ocr_text.strip()
         
-        # 1. Remove line numbers common in code editors (e.g. "294 ROW_NUMBER 295 RANK 296 DENSE_RANK")
-        cleaned = re.sub(r'^\s*\d{1,4}\s+', '', cleaned, flags=re.MULTILINE)
-        cleaned = re.sub(r'\b(29[0-9]|30[0-9]|31[0-9]|32[0-9]|33[0-9])\b(?=\s+[A-Za-z_])', '', cleaned)
-        cleaned = re.sub(r'\b\d{1,3}\b(?=\s+(?:SELECT|FROM|WHERE|GROUP|ORDER|ROW_NUMBER|RANK|DENSE_RANK|DEF|CLASS|IMPORT))', '', cleaned, flags=re.IGNORECASE)
+        # 1. Remove generic line numbers common in slide code editors (e.g. "1: ", "294 ", "12. ")
+        cleaned = re.sub(r'^\s*\d{1,4}\s*[:|.)]\s*', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'^\s*\d{1,4}\s+(?=[A-Za-z_])', '', cleaned, flags=re.MULTILINE)
         
-        # 2. Fix common OCR misrecognitions for SQL keywords
-        cleaned = re.sub(r'\b(ElECT|EIeCT|ELeCT|SElECT)\b', 'SELECT', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\b(ROH_MUMBER|RON_NUMBER|ROH_NUMBER|ROW NUMBER)\b', 'ROW_NUMBER', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\b(dense rnk|dense_rnk|DENSE RANK)\b', 'DENSE_RANK', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\b(OVER\s*\(\s*ORDER\s+BY)\b', 'OVER (ORDER BY', cleaned, flags=re.IGNORECASE)
-        
-        # 3. Clean up non-code OCR junk characters (e.g. stray pipe bars, broken symbols)
+        # 2. Clean up non-printable and non-standard noise characters
         cleaned = re.sub(r'[^\x20-\x7E\n\t]', ' ', cleaned)
         cleaned = re.sub(r'[ \t]{2,}', ' ', cleaned)
         
-        # 4. Remove empty lines
-        lines = [line.strip() for line in cleaned.splitlines() if line.strip() and not PipelineCleaner.is_gibberish_or_broken(line.strip())]
-        return "\n".join(lines)
+        # 3. Filter lines: drop isolated noise symbols or corrupted lines
+        clean_lines = []
+        for line in cleaned.splitlines():
+            l_str = line.strip()
+            if not l_str:
+                continue
+            # Drop lines with only 1-2 non-alphanumeric noise chars (e.g. "~", "|", "-")
+            if len(l_str) <= 2 and not l_str.isalnum():
+                continue
+            if PipelineCleaner.is_gibberish_or_broken(l_str):
+                continue
+            clean_lines.append(l_str)
+            
+        return "\n".join(clean_lines)
 
     @staticmethod
     def is_duplicate_ocr(curr_ocr: str, previous_ocrs: List[str], similarity_threshold: float = 0.82) -> bool:
-        """Checks if slide OCR is essentially identical to a recently observed slide."""
+        """
+        Generic token-level Jaccard similarity check for duplicate OCR across frames.
+        """
         if not curr_ocr or not previous_ocrs:
             return False
             
@@ -304,9 +300,8 @@ class PipelineCleaner:
     ) -> Dict[str, Any]:
         """
         Constructs a structured, normalized multimodal lecture knowledge base.
-        Separates spoken transcript from visual slide code and structures them logically.
+        Separates spoken transcript from visual slide code and structures them chronologically.
         """
-        # Clean & deduplicate visuals
         clean_visuals: List[Dict[str, Any]] = []
         seen_ocrs: List[str] = []
         
@@ -365,9 +360,9 @@ class PipelineCleaner:
             elif ev["type"] == "visual":
                 content_parts = []
                 if ev.get("description"):
-                    content_parts.append(f"Diagram/Layout: {ev['description']}")
+                    content_parts.append(f"Visual Breakdown: {ev['description']}")
                 if ev.get("ocr"):
-                    content_parts.append(f"Slide Code/Text:\n```\n{ev['ocr']}\n```")
+                    content_parts.append(f"Slide Content:\n```\n{ev['ocr']}\n```")
                 if content_parts:
                     timeline_blocks.append(f"{ts_badge} [Slide Visual]: {' | '.join(content_parts)}")
 
@@ -380,6 +375,51 @@ class PipelineCleaner:
             "timeline_text": compiled_text
         }
 
+    # -------------------------------------------------------------
+    # Generic Pipeline Quality Metrics & Diagnostics
+    # -------------------------------------------------------------
+
+    @staticmethod
+    def compute_ngram_repetition_rate(text: str, n: int = 3) -> float:
+        """Calculates n-gram repetition ratio to detect looping ASR or degenerate outputs."""
+        if not text or not isinstance(text, str):
+            return 0.0
+        words = text.lower().split()
+        if len(words) < n:
+            return 0.0
+        ngrams = [tuple(words[i:i+n]) for i in range(len(words) - n + 1)]
+        if not ngrams:
+            return 0.0
+        unique_ngrams = set(ngrams)
+        return round(1.0 - (len(unique_ngrams) / len(ngrams)), 3)
+
+    @staticmethod
+    def compute_sentence_similarity(s1: str, s2: str) -> float:
+        """Token-level Jaccard similarity between two sentences."""
+        if not s1 or not s2:
+            return 0.0
+        tokens1 = set(re.findall(r'\b\w+\b', s1.lower()))
+        tokens2 = set(re.findall(r'\b\w+\b', s2.lower()))
+        if not tokens1 or not tokens2:
+            return 0.0
+        intersection = tokens1.intersection(tokens2)
+        union = tokens1.union(tokens2)
+        return round(len(intersection) / len(union), 3)
+
+    @staticmethod
+    def compute_chunk_overlap_ratio(chunk1_text: str, chunk2_text: str) -> float:
+        """Evaluates boundary word overlap ratio between two consecutive chunks."""
+        if not chunk1_text or not chunk2_text:
+            return 0.0
+        words1 = chunk1_text.split()
+        words2 = chunk2_text.split()
+        if not words1 or not words2:
+            return 0.0
+        tail = [w.lower().strip(".,!?:;\"'") for w in words1[-min(10, len(words1)):]]
+        head = [w.lower().strip(".,!?:;\"'") for w in words2[:min(10, len(words2))]]
+        overlap = set(tail).intersection(set(head))
+        return round(len(overlap) / max(1, len(set(tail))), 3)
+
     @staticmethod
     def validate_pipeline_metrics(
         raw_transcript_count: int,
@@ -389,8 +429,8 @@ class PipelineCleaner:
         clean_knowledge_text: str
     ) -> Dict[str, Any]:
         """
-        Validates pipeline quality metrics before saving.
-        Calculates duplicate sentence ratio and verifies timestamp coherence.
+        Validates pipeline quality metrics before synthesis.
+        Tracks duplicate ratios, n-gram repetition rates, and content integrity.
         """
         lines = [l.strip() for l in clean_knowledge_text.splitlines() if l.strip()]
         sentences = [l for l in lines if len(l.split()) >= 4]
@@ -398,6 +438,7 @@ class PipelineCleaner:
         total_sentences = len(sentences)
         unique_sentences = len(set(s.lower() for s in sentences))
         dup_ratio = round((total_sentences - unique_sentences) / max(1, total_sentences), 3)
+        ngram_rep = PipelineCleaner.compute_ngram_repetition_rate(clean_knowledge_text, n=3)
         
         metrics = {
             "raw_transcripts": raw_transcript_count,
@@ -407,10 +448,11 @@ class PipelineCleaner:
             "total_sentences": total_sentences,
             "unique_sentences": unique_sentences,
             "duplicate_sentence_ratio": dup_ratio,
-            "is_valid": dup_ratio <= 0.20
+            "ngram_repetition_rate": ngram_rep,
+            "is_valid": dup_ratio <= 0.20 and ngram_rep <= 0.25
         }
         
-        print(f"[Pipeline Validation] Transcripts: {raw_transcript_count} -> {clean_transcript_count} | Keyframes: {raw_keyframe_count} -> {unique_keyframe_count} | Dup Ratio: {dup_ratio:.1%} (Passed={metrics['is_valid']})")
+        print(f"[Pipeline Validation] Transcripts: {raw_transcript_count} -> {clean_transcript_count} | Keyframes: {raw_keyframe_count} -> {unique_keyframe_count} | Dup Ratio: {dup_ratio:.1%} | N-Gram Rep: {ngram_rep:.1%} (Passed={metrics['is_valid']})")
         return metrics
 
 cleaner_service = PipelineCleaner()
