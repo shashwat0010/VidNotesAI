@@ -36,4 +36,22 @@ class OCRService:
             print(f"[OCR Notice] OCR fast-read on {os.path.basename(image_path)}: {e}")
             return ""
 
+    def extract_batch_gpu_modal(self, image_urls: list[str]) -> Optional[list[dict]]:
+        """
+        Invokes deployed Modal serverless NVIDIA T4 GPU function to process all keyframes in parallel.
+        Returns list of {'url': ..., 'ocr_text': ..., 'success': True} or None if Modal is unavailable.
+        """
+        if not image_urls:
+            return []
+        try:
+            import modal
+            print(f"⚡ Dispatching {len(image_urls)} keyframes to Modal Serverless GPU (NVIDIA T4)...")
+            f = modal.Function.lookup("vidnotes-gpu-worker", "process_keyframes_ocr_gpu")
+            gpu_results = f.remote(image_urls)
+            print(f"✅ Received {len(gpu_results)} GPU OCR outputs from Modal.")
+            return gpu_results
+        except Exception as e:
+            print(f"[Modal GPU Notice] Modal serverless invocation skipped ({e}). Falling back to local OCR engine.")
+            return None
+
 ocr_service = OCRService()
