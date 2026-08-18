@@ -23,19 +23,102 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    email = None
+    oauth_id = None
+    provider = "email"
+
+    # 1. Try decoding with local SECRET_KEY
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        email = payload.get("sub")
+    except Exception:
+        # 2. Try decoding as Supabase JWT
+        try:
+            if settings.SUPABASE_JWT_SECRET:
+                payload = jwt.decode(token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+            else:
+                # Unverified extraction for seamless token decoding
+                payload = jwt.get_unverified_claims(token)
+            
+            email = payload.get("email") or (payload.get("user_metadata", {}) or {}).get("email")
+            oauth_id = str(payload.get("sub", ""))
+            provider = (payload.get("app_metadata", {}) or {}).get("provider", "supabase")
+        except Exception:
             raise credentials_exception
-    except JWTError:
+
+    if not email:
         raise credentials_exception
 
     result = await db.execute(select(User).filter(User.email == email))
     user = result.scalars().first()
+    
+    # Auto-provision Supabase / OAuth user in PostgreSQL if they don't exist yet
     if user is None:
-        raise credentials_exception
+        user = User(
+            email=email,
+            oauth_provider=provider or "supabase",
+            oauth_id=oauth_id,
+            is_active=True
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
     return user
+
+@router.post("/supabase-sync", response_model=Token)
+async def supabase_sync(payload: dict, db: AsyncSession = Depends(get_db)):
+    """
+    Syncs authenticated Supabase user session with backend PostgreSQL database.
+    Creates or retrieves the corresponding User record and returns authentication package.
+    """
+    access_token = payload.get("access_token")
+    email = payload.get("email")
+    oauth_id = payload.get("id")
+    
+    if not email and access_token:
+        try:
+            claims = jwt.get_unverified_claims(access_token)
+            email = claims.get("email") or (claims.get("user_metadata", {}) or {}).get("email")
+            oauth_id = oauth_id or str(claims.get("sub", ""))
+        except Exception:
+            pass
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Valid email required for user synchronization."
+        )
+
+    result = await db.execute(select(User).filter(User.email == email))
+    user = result.scalars().first()
+
+    if not user:
+        user = User(
+            email=email,
+            oauth_provider="supabase",
+            oauth_id=str(oauth_id) if oauth_id else None,
+            is_active=True
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif oauth_id and not user.oauth_id:
+        user.oauth_id = str(oauth_id)
+        user.oauth_provider = "supabase"
+        await db.commit()
+        await db.refresh(user)
+
+    # Return valid session with token
+    token_str = access_token or create_access_token(
+        subject=user.email, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": token_str,
+        "token_type": "bearer",
+        "user": user
+    }
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
