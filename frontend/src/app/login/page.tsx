@@ -31,7 +31,12 @@ export default function Login() {
     try {
       await loginWithOAuth(provider);
     } catch (err: any) {
-      setError(err.message || `Failed to initiate ${provider} sign-in.`);
+      const msg = err.message || "";
+      if (msg.includes("provider is not enabled") || msg.includes("validation_failed")) {
+        setError(`${provider.toUpperCase()} login is not enabled in your Supabase dashboard yet. You can sign in using Email & Password below, or turn on ${provider.toUpperCase()} under Authentication -> Providers in Supabase.`);
+      } else {
+        setError(msg || `Failed to initiate ${provider} sign-in.`);
+      }
       setOauthLoading(null);
     }
   };

@@ -43,7 +43,12 @@ export default function Signup() {
     try {
       await loginWithOAuth(provider);
     } catch (err: any) {
-      setError(err.message || `Failed to initiate ${provider} sign-up.`);
+      const msg = err.message || "";
+      if (msg.includes("provider is not enabled") || msg.includes("validation_failed")) {
+        setError(`${provider.toUpperCase()} signup is not enabled in your Supabase dashboard yet. You can sign up using Email & Password below, or turn on ${provider.toUpperCase()} under Authentication -> Providers in Supabase.`);
+      } else {
+        setError(msg || `Failed to initiate ${provider} sign-up.`);
+      }
       setOauthLoading(null);
     }
   };
