@@ -37,7 +37,9 @@
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 100vh;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   background-image: 
     radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.16) 0px, transparent 45%),
