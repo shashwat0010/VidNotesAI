@@ -63,11 +63,15 @@ export default function Dashboard() {
 
   // Load Folders & Videos
   useEffect(() => {
-    if (user) {
-      fetchFolders();
-      fetchVideos();
-    }
+    fetchFolders();
+    fetchVideos();
   }, [user]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/login");
+    }
+  }, [user, authLoading, router]);
 
   // Polling for processing videos
   useEffect(() => {

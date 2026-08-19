@@ -68,48 +68,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     async function initAuth() {
-      // 1. If Supabase is configured, check active Supabase session
-      if (isSupabase && supabase) {
-        try {
-          const { data: { session }, error } = await supabase.auth.getSession();
-          if (session && session.user?.email && mounted) {
-            await syncSupabaseSession(session.access_token, session.user.email, session.user.id);
+      try {
+        // 1. If Supabase is configured, check active Supabase session
+        if (isSupabase && supabase) {
+          try {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (session && session.user?.email && mounted) {
+              await syncSupabaseSession(session.access_token, session.user.email, session.user.id);
+              if (mounted) setLoading(false);
+              return;
+            }
+          } catch (supaErr) {
+            console.warn("Supabase getSession notice:", supaErr);
           }
-        } catch (supaErr) {
-          console.error("Error reading Supabase session:", supaErr);
+
+          // Setup subscription for OAuth redirects & login events
+          supabase.auth.onAuthStateChange(async (event, session) => {
+            if (!mounted) return;
+            if (session && session.user?.email) {
+              await syncSupabaseSession(session.access_token, session.user.email, session.user.id);
+            } else if (event === "SIGNED_OUT") {
+              localStorage.removeItem("vidnotes_token");
+              setUser(null);
+            }
+          });
         }
 
-        // Listen for Supabase auth state changes (OAuth redirects, token refreshes, logouts)
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-          if (!mounted) return;
-          if (session && session.user?.email) {
-            await syncSupabaseSession(session.access_token, session.user.email, session.user.id);
-          } else if (event === "SIGNED_OUT") {
+        // 2. Direct FastAPI JWT check (or fallback when Supabase session not yet hydrated)
+        const token = localStorage.getItem("vidnotes_token");
+        if (token && mounted) {
+          try {
+            const userData = await api.get<User>("/auth/me");
+            if (mounted) setUser(userData);
+          } catch (err) {
+            console.warn("Stored token invalid or expired:", err);
             localStorage.removeItem("vidnotes_token");
-            setUser(null);
+            if (mounted) setUser(null);
           }
-        });
-
-        if (mounted) setLoading(false);
-        return () => {
-          mounted = false;
-          subscription.unsubscribe();
-        };
-      }
-
-      // 2. Direct FastAPI Auth Fallback (if Supabase not yet configured)
-      const token = localStorage.getItem("vidnotes_token");
-      if (token && mounted) {
-        try {
-          const userData = await api.get<User>("/auth/me");
-          if (mounted) setUser(userData);
-        } catch (err) {
-          console.error("Token verification failed:", err);
-          localStorage.removeItem("vidnotes_token");
-          if (mounted) setUser(null);
+        } else if (mounted) {
+          setUser(null);
         }
+      } catch (e) {
+        console.error("Init auth error:", e);
+      } finally {
+        if (mounted) setLoading(false);
       }
-      if (mounted) setLoading(false);
     }
 
     initAuth();
@@ -122,11 +125,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Route protection
     if (!loading) {
-      const token = localStorage.getItem("vidnotes_token");
       const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname === "/";
-      if (!token && !isAuthPage) {
+      if (!user && !isAuthPage) {
         router.push("/login");
-      } else if (token && (pathname === "/login" || pathname === "/signup")) {
+      } else if (user && (pathname === "/login" || pathname === "/signup")) {
         router.push("/dashboard");
       }
     }
@@ -198,7 +200,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithOAuth = async (provider: "google" | "github") => {
     if (!isSupabase || !supabase) {
-      throw new Error("Supabase is not configured. Please add your NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local.");
+      throw new Error("Supabase is not configured. Please add your NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY to .env.local.");
     }
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const { error } = await supabase.auth.signInWithOAuth({

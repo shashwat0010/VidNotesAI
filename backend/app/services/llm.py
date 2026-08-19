@@ -405,11 +405,18 @@ Output ONLY the JSON object starting with '{{' and ending with '}}'."""
         def _call_mistral(system_msg: str, user_msg: str, max_tokens: int = 3000) -> str:
             """Call OpenRouter / OpenAI / Gemini / Mistral with fallback model list."""
             if settings.OPENROUTER_API_KEY and self.openrouter_client:
-                # Active free OpenRouter models (prioritizing NVIDIA models with no shared pool 429s)
+                # Active high-performance models on OpenRouter (including DeepSeek R1, Llama 3.3, Gemini 2.0, Nemotron)
                 models_to_try = [
+                    "deepseek/deepseek-r1-distill-llama-70b:free",
+                    "deepseek/deepseek-chat:free",
+                    "meta-llama/llama-3.3-70b-instruct:free",
+                    "google/gemini-2.0-flash-exp:free",
+                    "google/gemini-2.0-flash-lite-preview-02-05:free",
                     "nvidia/nemotron-3-ultra-550b-a55b:free",
                     "nvidia/nemotron-3.5-lightning:free",
                     "nvidia/nemotron-nano-12b-v2-vl:free",
+                    "mistralai/mistral-small-24b-instruct-2501:free",
+                    "qwen/qwen-2.5-72b-instruct:free",
                     "google/gemma-4-26b-a4b-it:free",
                     "google/gemma-4-31b-it:free",
                     "openrouter/free",
@@ -840,19 +847,21 @@ Output ONLY valid JSON starting with '{{' and ending with '}}'."""
         """Call OpenRouter with model fallback. Returns raw response string or empty string."""
         if not (settings.OPENROUTER_API_KEY and self.openrouter_client):
             return ""
-        # Expansive list of active free models on OpenRouter
+        # Expansive list of active models on OpenRouter (including DeepSeek R1, Llama 3.3, Gemini 2.0, Nemotron)
         fallback_models = [
+            "deepseek/deepseek-r1-distill-llama-70b:free",
+            "deepseek/deepseek-chat:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemini-2.0-flash-exp:free",
+            "google/gemini-2.0-flash-lite-preview-02-05:free",
             "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nvidia/nemotron-3.5-lightning:free",
             "nvidia/nemotron-nano-12b-v2-vl:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
             "meta-llama/llama-3.2-3b-instruct:free",
-            "mistralai/mistral-7b-instruct:free",
             "mistralai/mistral-small-24b-instruct-2501:free",
             "qwen/qwen-2.5-72b-instruct:free",
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
-            "google/gemini-2.0-flash-exp:free",
             "openrouter/free",
         ]
         if settings.OPENROUTER_MODEL and settings.OPENROUTER_MODEL not in fallback_models:
