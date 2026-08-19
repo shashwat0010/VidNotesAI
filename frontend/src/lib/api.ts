@@ -37,82 +37,77 @@ class ApiClient {
     return headers;
   }
 
-  async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "GET",
-      headers: this.getHeaders(),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(errData.detail || "Request failed");
+  private handleNetworkError(err: any): never {
+    if (err instanceof TypeError && err.message.toLowerCase().includes("fetch")) {
+      throw new Error("Backend server is not reachable on port 8000. Please start the backend (uvicorn app.main:app --port 8000).");
     }
-    return response.json();
+    throw err;
+  }
+
+  async get<T>(path: string): Promise<T> {
+    try {
+      const response = await fetch(`${this.getBaseUrl()}${path}`, {
+        method: "GET",
+        headers: this.getHeaders(),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: "Request failed" }));
+        throw new Error(errData.detail || "Request failed");
+      }
+      return response.json();
+    } catch (err) {
+      this.handleNetworkError(err);
+    }
   }
 
   async post<T>(path: string, body: any): Promise<T> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(errData.detail || "Request failed");
+    try {
+      const response = await fetch(`${this.getBaseUrl()}${path}`, {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: "Request failed" }));
+        throw new Error(errData.detail || "Request failed");
+      }
+      return response.json();
+    } catch (err) {
+      this.handleNetworkError(err);
     }
-    return response.json();
   }
 
   async postForm<T>(path: string, formData: FormData): Promise<T> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "POST",
-      headers: this.getHeaders(true),
-      body: formData,
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(errData.detail || "Request failed");
+    try {
+      const response = await fetch(`${this.getBaseUrl()}${path}`, {
+        method: "POST",
+        headers: this.getHeaders(true),
+        body: formData,
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: "Form submission failed" }));
+        throw new Error(errData.detail || "Form submission failed");
+      }
+      return response.json();
+    } catch (err) {
+      this.handleNetworkError(err);
     }
-    return response.json();
-  }
-
-  async put<T>(path: string, body: any): Promise<T> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "PUT",
-      headers: this.getHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(errData.detail || "Request failed");
-    }
-    return response.json();
   }
 
   async delete<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "DELETE",
-      headers: this.getHeaders(),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Request failed" }));
-      throw new Error(errData.detail || "Request failed");
+    try {
+      const response = await fetch(`${this.getBaseUrl()}${path}`, {
+        method: "DELETE",
+        headers: this.getHeaders(),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ detail: "Delete request failed" }));
+        throw new Error(errData.detail || "Delete request failed");
+      }
+      return response.json();
+    } catch (err) {
+      this.handleNetworkError(err);
     }
-    if (response.status === 204) {
-      return {} as T;
-    }
-    return response.json().catch(() => ({})) as Promise<T>;
-  }
-
-  async downloadBlob(path: string): Promise<Blob> {
-    const response = await fetch(`${this.getBaseUrl()}${path}`, {
-      method: "GET",
-      headers: this.getHeaders(),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ detail: "Download failed" }));
-      throw new Error(errData.detail || "Download failed");
-    }
-    return response.blob();
   }
 }
 
